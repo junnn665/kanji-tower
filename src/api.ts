@@ -50,7 +50,9 @@ function netError(e: unknown): Error {
   const msg = String((e as { code?: string; message?: string })?.code || (e as Error)?.message || e);
   if (/permission/i.test(msg)) return new Error("データベースに書きこめませんでした（Firebase のルールを確認してください）");
   if (/つながりません/.test(msg)) return new Error(msg);
-  return new Error("通信できませんでした。電波のよい所でもう一度試してください");
+  // 原因を調べやすいよう、Firebase からの理由を短く添える
+  const detail = msg.replace(/^Error:\s*/, "").slice(0, 60);
+  return new Error(`通信できませんでした。電波のよい所でもう一度試してください（${detail}）`);
 }
 
 // ---------- ランキング ----------
@@ -108,11 +110,16 @@ export async function submitScore(
     const up: Record<string, unknown> = { created: 9e15 };
     for (const k of KINDS) up[`${mode}/${k}/${id}`] = row;
     await m.update(m.ref(m.db, RANK), up);
+    // 書けたら登録は成功。順位の読み直しに失敗しても登録は取り消さない
     const ranks = {} as Record<Kind, number | null>;
     for (const k of KINDS) {
-      const rows = await fetchKind(mode, k);
-      const i = rows.findIndex((r) => r.id === id);
-      ranks[k] = i < 0 ? null : i + 1;
+      try {
+        const rows = await fetchKind(mode, k);
+        const i = rows.findIndex((r) => r.id === id);
+        ranks[k] = i < 0 ? null : i + 1;
+      } catch {
+        ranks[k] = null;
+      }
     }
     void prune(mode);
     return ranks;
