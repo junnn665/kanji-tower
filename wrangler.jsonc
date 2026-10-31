@@ -20,7 +20,7 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
   "vars": {
     // 公開するゲームのオリジン（パスは含めない）。カンマ区切りで複数可
-    "ALLOWED_ORIGINS": "https://YOUR_GITHUB_NAME.github.io"
+    "ALLOWED_ORIGINS": "https://junnn665.github.io"
   },
   "observability": { "enabled": true },
   "env": {
