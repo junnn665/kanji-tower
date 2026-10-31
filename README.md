@@ -107,7 +107,7 @@ npm run build
 
 ## 公開する（GitHub Pages）
 
-1. Settings → Pages → Source を「GitHub Actions」にする
+1. Settings → Pages → Source を「GitHub Actions」にする（「Deploy from a branch」のままだと、ビルド前のファイルが公開されてボタンが動かなくなる）
 2. main に push すると、テスト・ビルド・公開が走る（`.github/workflows/deploy-pages.yml`）
 3. `https://junnn665.github.io/kanji-tower/` で遊べる
 

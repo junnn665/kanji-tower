@@ -1461,5 +1461,8 @@ void glyphsReady();
 const roomParam = new URLSearchParams(location.search).get("room");
 if (roomParam && /^\d{4}$/.test(roomParam)) openRoomDialog(roomParam);
 
+// 起動できた印（index.html の「読み込めませんでした」表示を出さない）
+(window as unknown as { __ktReady: boolean }).__ktReady = true;
+
 // 開発時の確認用
 if (import.meta.env.DEV) Object.assign(window, { __game: () => game, __api: API });
