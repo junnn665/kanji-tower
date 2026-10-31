@@ -1461,6 +1461,9 @@ void glyphsReady();
 const roomParam = new URLSearchParams(location.search).get("room");
 if (roomParam && /^\d{4}$/.test(roomParam)) openRoomDialog(roomParam);
 
+// iPhone：ピンチでのズームを止める（2回タップのズームは CSS の touch-action: manipulation で止めている）
+document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false } as AddEventListenerOptions);
+
 // 起動できた印（index.html の「読み込めませんでした」表示を出さない）
 (window as unknown as { __ktReady: boolean }).__ktReady = true;
 

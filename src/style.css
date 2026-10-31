@@ -18,6 +18,10 @@
 html, body { margin: 0; height: 100%; }
 /* アプリ内ブラウザーが文字を勝手に大きくして枠からはみ出さないように */
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* ダブルタップでズームしない（iPhone）。盤面は touch-action: none のまま */
+html, body, button, input, dialog { touch-action: manipulation; }
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input { -webkit-user-select: text; user-select: text; }
 body {
   background: var(--paper);
   color: var(--ink);
