@@ -4,11 +4,11 @@
 //   rooms/kanji-<4桁>        部屋：game, created, host, state, round, seed, startAt, endAt
 //     players/<pid>          name, joined, online, round, status("playing"|"done"), score, doneAt
 //   rooms/kanji-<4桁>-live   対戦中の塔：<pid> = { s: 記録, t: 塔(JSON) }。部屋本体と分けて通信を軽くする
-//   rooms/kanji-ranking      ランキング：created(=9e15、自動おそうじ対象外), <種目>/<id> = 記録
+//   rooms/kanji-ranking      ランキング：created(=9e15、自動おそうじ対象外), <難易度>/<種目>/<id> = 記録
 //
 // Firebase は使うときに読み込む（ひとり用は Firebase なしですぐ遊べる）。
 import type { Piece } from "./render";
-import { BATTLE_SECONDS, compareScore, KINDS, MAX_PLAYERS, plausible, type Kind, type Score } from "./shared/rules";
+import { BATTLE_SECONDS, compareScore, isMode, KINDS, MAX_PLAYERS, plausible, type Kind, type Mode, type Score } from "./shared/rules";
 import { store } from "./storage";
 
 type FB = typeof import("./firebase");
@@ -55,26 +55,26 @@ export interface RankRow extends Score {
   at: number;
 }
 
-const cache = new Map<Kind, { t: number; rows: (RankRow & { id: string })[] }>();
+const cache = new Map<string, { t: number; rows: (RankRow & { id: string })[] }>();
 
-async function fetchKind(kind: Kind) {
+async function fetchKind(mode: Mode, kind: Kind) {
   const m = await fb();
-  const snap = await m.get(m.query(m.ref(m.db, `${RANK}/${kind}`), m.orderByChild(kind), m.limitToLast(100)));
+  const snap = await m.get(m.query(m.ref(m.db, `${RANK}/${mode}/${kind}`), m.orderByChild(kind), m.limitToLast(100)));
   const rows: (RankRow & { id: string })[] = [];
   snap.forEach((c) => {
     const v = c.val();
     if (v && typeof v.name === "string") rows.push({ id: c.key!, name: v.name, strokes: v.strokes | 0, height: v.height | 0, count: v.count | 0, at: v.at | 0 });
   });
   rows.sort((a, b) => compareScore(kind, a, b) || a.at - b.at);
-  cache.set(kind, { t: Date.now(), rows });
+  cache.set(`${mode}/${kind}`, { t: Date.now(), rows });
   return rows;
 }
 
-export async function getRanking(kind: Kind, force = false): Promise<RankRow[]> {
-  const c = cache.get(kind);
+export async function getRanking(mode: Mode, kind: Kind, force = false): Promise<RankRow[]> {
+  const c = cache.get(`${mode}/${kind}`);
   if (!force && c && Date.now() - c.t < 60_000) return c.rows;
   try {
-    return await fetchKind(kind);
+    return await fetchKind(mode, kind);
   } catch (e) {
     throw netError(e);
   }
@@ -84,6 +84,7 @@ const sentAt: number[] = [];
 
 /** 送ったあとの各種目の順位（100位より下は null） */
 export async function submitScore(
+  mode: Mode,
   name: string,
   s: Score & { playMs: number; drops: number },
 ): Promise<Record<Kind, number | null>> {
@@ -94,18 +95,18 @@ export async function submitScore(
   sentAt.push(t);
   try {
     const m = await fb();
-    const id = m.push(m.ref(m.db, `${RANK}/strokes`)).key!;
+    const id = m.push(m.ref(m.db, `${RANK}/${mode}/strokes`)).key!;
     const row = { name, strokes: s.strokes, height: s.height, count: s.count, at: now() };
     const up: Record<string, unknown> = { created: 9e15 };
-    for (const k of KINDS) up[`${k}/${id}`] = row;
+    for (const k of KINDS) up[`${mode}/${k}/${id}`] = row;
     await m.update(m.ref(m.db, RANK), up);
     const ranks = {} as Record<Kind, number | null>;
     for (const k of KINDS) {
-      const rows = await fetchKind(k);
+      const rows = await fetchKind(mode, k);
       const i = rows.findIndex((r) => r.id === id);
       ranks[k] = i < 0 ? null : i + 1;
     }
-    void prune();
+    void prune(mode);
     return ranks;
   } catch (e) {
     throw netError(e);
@@ -113,11 +114,11 @@ export async function submitScore(
 }
 
 /** 各種目、下位を消して200件ほどに保つ（データベースを大きくしないため） */
-async function prune() {
+async function prune(mode: Mode) {
   try {
     const m = await fb();
     for (const k of KINDS) {
-      const snap = await m.get(m.query(m.ref(m.db, `${RANK}/${k}`), m.orderByChild(k)));
+      const snap = await m.get(m.query(m.ref(m.db, `${RANK}/${mode}/${k}`), m.orderByChild(k)));
       const n = snap.size;
       if (n <= 300) continue;
       const jobs: Promise<void>[] = [];
@@ -144,6 +145,7 @@ export interface RoomPlayer {
 
 export interface RoomState {
   code: string;
+  mode: Mode;
   phase: "lobby" | "playing" | "result";
   players: RoomPlayer[];
   seed: number;
@@ -171,6 +173,7 @@ interface FbRoom {
   created: number;
   host: string;
   state: "lobby" | "playing" | "result";
+  mode?: Mode;
   round: number;
   seed: number;
   startAt: number;
@@ -321,7 +324,7 @@ export class RoomClient {
         .filter((p) => inRound.has(p.id))
         .sort((a, b) => compareScore("strokes", a.score, b.score));
     }
-    return { code: this.code, phase: v.state, players, seed: v.seed, startsAt: v.startAt, endsAt: v.endAt };
+    return { code: this.code, mode: isMode(v.mode) ? v.mode : "normal", phase: v.state, players, seed: v.seed, startsAt: v.startAt, endsAt: v.endAt };
   }
 
   /** 部屋主がいなくなったら、いちばん早く入った人が引き継ぐ */
@@ -396,7 +399,7 @@ export class RoomClient {
     }
   }
 
-  send(msg: { t: string; score?: Score }) {
+  send(msg: { t: string; score?: Score; mode?: Mode }) {
     void fb().then(async (m) => {
       const base = `${ROOM(this.code)}/players/${this.me}`;
       switch (msg.t) {
@@ -404,6 +407,10 @@ export class RoomClient {
           return this.start(m);
         case "done":
           return m.update(m.ref(m.db, base), { status: "done", score: cleanScore(msg.score), doneAt: now() }).catch(() => {});
+        case "mode":
+          if (this.room?.host === this.me && this.room.state === "lobby" && isMode(msg.mode))
+            return m.update(m.ref(m.db, ROOM(this.code)), { mode: msg.mode }).catch(() => {});
+          return;
         case "rematch":
           if (this.room?.host === this.me) return m.update(m.ref(m.db, ROOM(this.code)), { state: "lobby" }).catch(() => {});
           return;

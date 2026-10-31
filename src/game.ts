@@ -1,8 +1,8 @@
 import { Body, Box, Vec2, World } from "planck";
 import { kanji, mergeOf } from "./shared/kanji";
-import { pickCandidates, rng, type Score } from "./shared/rules";
+import { MODE, pickCandidates, rng, type Mode, type ModeDef, type Score } from "./shared/rules";
 import { glyphRects } from "./glyph";
-import { drawPiece, drawPlatform, PLATFORM_H, PLATFORM_HALF, type Piece } from "./render";
+import { drawPiece, drawPlatform, PLATFORM_H, type Piece } from "./render";
 import { sfx } from "./sound";
 
 interface Meta {
@@ -14,6 +14,7 @@ interface Meta {
 
 export interface GameOptions {
   seed: number;
+  mode: Mode;
   /** 対戦の終了時刻（Date.now() 基準）。ひとり用は undefined */
   endsAt?: number;
   onChange?: (g: Game) => void;
@@ -63,12 +64,15 @@ export class Game {
   /** 最高記録を出したときの塔 */
   bestTower: Piece[] = [];
 
+  readonly def: ModeDef;
+
   constructor(canvas: HTMLCanvasElement, readonly opts: GameOptions) {
+    this.def = MODE[opts.mode];
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
     this.rand = rng(opts.seed);
     const ground = this.world.createBody({ type: "static", position: Vec2(0, -PLATFORM_H / 2) });
-    ground.createFixture(new Box(PLATFORM_HALF, PLATFORM_H / 2), { friction: 0.9 });
+    ground.createFixture(new Box(this.def.platformHalf, PLATFORM_H / 2), { friction: 0.9 });
     ground.setUserData({ ch: "", landed: true, alive: true, flash: 0 } satisfies Meta);
     this.world.on("begin-contact", (c) => {
       const a = c.getFixtureA().getBody();
@@ -129,7 +133,7 @@ export class Game {
 
   private reroll() {
     const tower = this.towerBodies().map((b) => (b.getUserData() as Meta).ch);
-    this.candidates = pickCandidates(this.rand, tower, this.seen);
+    this.candidates = pickCandidates(this.rand, tower, this.seen, 3, this.def.fitWeights);
     this.selected = Math.min(this.selected, 2);
     this.aimAngle = 0;
     this.opts.onChange?.(this);
@@ -148,10 +152,10 @@ export class Game {
 
   private makeBody(ch: string, x: number, y: number, angle: number, landed: boolean): Body {
     // 少し回りにくく・すべりにくくして、字の形でも積みやすくする
-    const body = this.world.createBody({ type: "dynamic", position: Vec2(x, y), angle, angularDamping: 0.6, linearDamping: 0.05 });
+    const body = this.world.createBody({ type: "dynamic", position: Vec2(x, y), angle, angularDamping: this.def.angularDamping, linearDamping: 0.05 });
     // 字の形をなぞった長方形の集まり
     for (const [cx, cy, hw, hh] of glyphRects(ch))
-      body.createFixture(new Box(hw, hh, Vec2(cx, cy)), { density: 1, friction: 1.0, restitution: 0 });
+      body.createFixture(new Box(hw, hh, Vec2(cx, cy)), { density: 1, friction: this.def.friction, restitution: 0 });
     body.setUserData({ ch, landed, alive: true, flash: 0 } satisfies Meta);
     return body;
   }
@@ -330,15 +334,15 @@ export class Game {
       ctx.stroke();
       ctx.setLineDash([]);
     }
-    drawPlatform(ctx);
+    drawPlatform(ctx, this.def.platformHalf);
 
     const sel = this.candidates[this.selected];
     for (let b = this.world.getBodyList(); b; b = b.getNext()) {
       const m = b.getUserData() as Meta;
       if (!m.ch || !m.alive) continue;
       const p = b.getPosition();
-      const glow = !this.over && m.landed && !!sel && !!mergeOf(sel, m.ch);
-      drawPiece(ctx, { ch: m.ch, x: p.x, y: p.y, a: b.getAngle() }, { glow, flash: m.flash });
+      const glow = this.def.hints && !this.over && m.landed && !!sel && !!mergeOf(sel, m.ch);
+      drawPiece(ctx, { ch: m.ch, x: p.x, y: p.y, a: b.getAngle() }, { glow, flash: m.flash, mono: this.def.mono });
       m.flash = Math.max(0, m.flash - dt * 2.5);
     }
 
@@ -353,7 +357,7 @@ export class Game {
       ctx.lineTo(this.aimX, 0);
       ctx.stroke();
       ctx.setLineDash([]);
-      drawPiece(ctx, { ch: sel, x: this.aimX, y: spawnY, a: this.aimAngle }, { alpha: ready ? 0.85 : 0.35 });
+      drawPiece(ctx, { ch: sel, x: this.aimX, y: spawnY, a: this.aimAngle }, { alpha: ready ? 0.85 : 0.35, mono: this.def.mono });
     }
 
     // 合体の吹き出し

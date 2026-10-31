@@ -61,6 +61,20 @@ describe("対戦の部屋（Firebase）", () => {
     expect(b.room()!.room.players.map((p) => p.name)).toEqual(["あおい", "けんた"]);
   });
 
+  it("部屋主だけが待合室で難易度を変えられる", async () => {
+    const code = await createRoom("pA");
+    const a = player(code, "あおい", "pA");
+    const b = player(code, "けんた", "pB");
+    await tick();
+    expect(a.room()!.room.mode).toBe("normal");
+    b.client.send({ t: "mode", mode: "easy" });
+    await tick();
+    expect(a.room()!.room.mode).toBe("normal");
+    a.client.send({ t: "mode", mode: "hard" });
+    await tick();
+    expect(b.room()!.room.mode).toBe("hard");
+  });
+
   it("部屋主が抜けたら次に入った人が引き継ぐ", async () => {
     const code = await createRoom("pA");
     const a = player(code, "あおい", "pA");
@@ -83,17 +97,21 @@ describe("ランキング（Firebase）", () => {
   it("登録すると種目ごとの順位が返り、ほかのゲームのデータに触れない", async () => {
     await fake.set(fake.ref(fake.db, "rooms/pref-ranking/normal/x"), { name: "県", score: 1 });
     const base = { playMs: 60_000, drops: 10 };
-    await submitScore("たろう", { strokes: 40, height: 300, count: 8, ...base });
-    const r = await submitScore("はなこ", { strokes: 50, height: 200, count: 6, ...base });
+    await submitScore("normal", "たろう", { strokes: 40, height: 300, count: 8, ...base });
+    const r = await submitScore("normal", "はなこ", { strokes: 50, height: 200, count: 6, ...base });
     expect(r).toEqual({ strokes: 1, height: 2, count: 2 });
-    const rows = await getRanking("height", true);
+    const rows = await getRanking("normal", "height", true);
     expect(rows.map((x) => x.name)).toEqual(["たろう", "はなこ"]);
+    // 難易度ごとに別のランキング
+    await submitScore("hard", "おに", { strokes: 10, height: 100, count: 2, ...base });
+    expect((await getRanking("hard", "strokes", true)).map((x) => x.name)).toEqual(["おに"]);
+    expect((await getRanking("easy", "strokes", true)).length).toBe(0);
     const rooms = fake.dump().rooms as Record<string, unknown>;
     expect(rooms["pref-ranking"]).toEqual({ normal: { x: { name: "県", score: 1 } } });
     expect((rooms["kanji-ranking"] as { created: number }).created).toBe(9e15);
   });
 
   it("ありえない記録は送らない", async () => {
-    await expect(submitScore("ずる", { strokes: 999, height: 1, count: 1, playMs: 1, drops: 1 })).rejects.toThrow();
+    await expect(submitScore("normal", "ずる", { strokes: 999, height: 1, count: 1, playMs: 1, drops: 1 })).rejects.toThrow();
   });
 });

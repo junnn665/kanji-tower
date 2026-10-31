@@ -33,6 +33,8 @@
           <h1>漢字<br />タワー</h1>
         </div>
         <p class="lead">漢字を積んで、くっつけて、<br />新しい字を作ろう。</p>
+        <div class="modes" id="mode-pick" role="radiogroup" aria-label="難易度"></div>
+        <p id="mode-desc" class="mode-desc"></p>
         <div class="menu">
           <button id="btn-solo" class="btn primary">ひとりで遊ぶ</button>
           <button id="btn-battle" class="btn ink">みんなで対戦</button>
@@ -42,6 +44,7 @@
           </div>
         </div>
         <button id="btn-sound" class="sound" aria-label="音のオン・オフ">音：オン</button>
+        <footer class="credit">中濱Games</footer>
       </section>
 
       <!-- ゲーム -->
@@ -104,7 +107,8 @@
         <h2>ランキング</h2>
         <button class="icon close" aria-label="閉じる">✕</button>
       </header>
-      <div class="tabs" id="rank-tabs" role="tablist"></div>
+      <div class="tabs modes-tabs" id="rank-modes" role="tablist" aria-label="難易度"></div>
+      <div class="tabs" id="rank-tabs" role="tablist" aria-label="種目"></div>
       <div id="rank-mine" class="mine"></div>
       <ol id="rank-list" class="rank-list"></ol>
       <p id="rank-msg" class="msg"></p>
@@ -135,6 +139,7 @@
             <button id="room-invite" class="btn small">招待リンクを送る</button>
           </div>
         </div>
+        <button id="room-mode" class="lobby-mode" type="button"></button>
         <p id="room-count" class="code-label"></p>
         <ul id="room-players" class="players"></ul>
         <button id="room-start" class="btn primary">対戦を始める</button>

@@ -33,6 +33,13 @@ export const BASE: KanjiDef[] = [
   { ch: "王", strokes: 4, note: "おう。" },
   { ch: "耳", strokes: 6, note: "みみ。" },
   { ch: "十", strokes: 2, note: "じゅう。" },
+  { ch: "金", strokes: 8, note: "かね、こがね。" },
+  { ch: "門", strokes: 8, note: "両開きのもん。" },
+  { ch: "雨", strokes: 8, note: "空から降るあめ。" },
+  { ch: "竹", strokes: 6, note: "まっすぐなたけ。" },
+  { ch: "牛", strokes: 4, note: "うし。" },
+  { ch: "貝", strokes: 7, note: "かい。昔はお金だった。" },
+  { ch: "米", strokes: 6, note: "こめ。" },
 ];
 
 /** 合体でだけ作れる字。parts は合体する2字（順不同）。 */
@@ -81,6 +88,25 @@ export const MERGED: (KanjiDef & { parts: [string, string] })[] = [
   { ch: "早", strokes: 6, parts: ["十", "日"], note: "はやい。" },
   { ch: "旺", strokes: 8, parts: ["王", "日"], note: "さかん。" },
   { ch: "計", strokes: 9, parts: ["言", "十"], note: "はかる。" },
+  { ch: "杜", strokes: 7, parts: ["木", "土"], note: "もり、やしろの森。" },
+  { ch: "呈", strokes: 7, parts: ["口", "王"], note: "さしだす。" },
+  { ch: "聖", strokes: 13, parts: ["耳", "呈"], note: "ひじり、きよらか。" },
+  { ch: "位", strokes: 7, parts: ["人", "立"], note: "くらい、立つ場所。" },
+  { ch: "理", strokes: 11, parts: ["王", "里"], note: "すじみち。" },
+  { ch: "直", strokes: 8, parts: ["十", "目"], note: "まっすぐ。" },
+  { ch: "針", strokes: 10, parts: ["金", "十"], note: "はり。" },
+  { ch: "間", strokes: 12, parts: ["門", "日"], note: "門のすきまから日が差す、あいだ。" },
+  { ch: "問", strokes: 11, parts: ["門", "口"], note: "とう。" },
+  { ch: "聞", strokes: 14, parts: ["門", "耳"], note: "きく。" },
+  { ch: "閑", strokes: 12, parts: ["門", "木"], note: "しずか、ひま。" },
+  { ch: "雷", strokes: 13, parts: ["雨", "田"], note: "かみなり。" },
+  { ch: "霜", strokes: 17, parts: ["雨", "相"], note: "しも。" },
+  { ch: "箱", strokes: 15, parts: ["竹", "相"], note: "はこ。" },
+  { ch: "笠", strokes: 11, parts: ["竹", "立"], note: "かさ。" },
+  { ch: "告", strokes: 7, parts: ["牛", "口"], note: "つげる。" },
+  { ch: "牲", strokes: 9, parts: ["牛", "生"], note: "いけにえ。" },
+  { ch: "賀", strokes: 12, parts: ["貝", "加"], note: "いわう。" },
+  { ch: "粒", strokes: 11, parts: ["米", "立"], note: "つぶ。" },
 ];
 
 export const ALL: KanjiDef[] = [...BASE, ...MERGED];

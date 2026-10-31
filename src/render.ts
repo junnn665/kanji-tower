@@ -9,7 +9,7 @@ export interface Piece {
   a: number;
 }
 
-export const PLATFORM_HALF = 2.6;
+export const DEFAULT_HALF = 2.6;
 export const PLATFORM_H = 0.5;
 
 // 字そのものを塗る色（墨の縁取りで、明るい背景でも読める濃さ）
@@ -25,7 +25,11 @@ export interface PieceStyle {
   alpha?: number;
   glow?: boolean;
   flash?: number; // 0..1 合体直後の白い光
+  /** 鬼畜：色をぜんぶ同じにする */
+  mono?: boolean;
 }
+
+const MONO = "#7d8a84";
 
 /**
  * 字の形だけを描く（枠なし）。当たり判定と同じ置き方（glyph.ts）で描く。
@@ -52,7 +56,7 @@ export function drawPiece(ctx: CanvasRenderingContext2D, p: Piece, style: PieceS
   ctx.lineWidth = 7;
   ctx.strokeStyle = "#1d2321";
   ctx.strokeText(p.ch, 0, 0);
-  ctx.fillStyle = colorOf(p.ch);
+  ctx.fillStyle = style.mono ? MONO : colorOf(p.ch);
   ctx.fillText(p.ch, 0, 0);
   if (style.flash) {
     ctx.fillStyle = `rgba(255,255,255,${style.flash})`;
@@ -61,7 +65,7 @@ export function drawPiece(ctx: CanvasRenderingContext2D, p: Piece, style: PieceS
   ctx.restore();
 }
 
-export function drawPlatform(ctx: CanvasRenderingContext2D) {
+export function drawPlatform(ctx: CanvasRenderingContext2D, PLATFORM_HALF = DEFAULT_HALF) {
   ctx.fillStyle = "#5b4636";
   ctx.beginPath();
   ctx.roundRect(-PLATFORM_HALF, -PLATFORM_H, PLATFORM_HALF * 2, PLATFORM_H, 0.08);
@@ -82,9 +86,11 @@ export function drawTowerFit(
   pieces: Piece[],
   box: { x: number; y: number; w: number; h: number },
   minHeight = 6,
+  opts: { half?: number; mono?: boolean } = {},
 ) {
+  const half = opts.half ?? DEFAULT_HALF;
   const top = Math.max(minHeight, ...pieces.map((p) => p.y + 1.2));
-  const spanW = Math.max(PLATFORM_HALF * 2 + 1.5, ...pieces.map((p) => Math.abs(p.x) * 2 + 2));
+  const spanW = Math.max(half * 2 + 1.5, ...pieces.map((p) => Math.abs(p.x) * 2 + 2));
   const scale = Math.min(box.w / spanW, box.h / (top + 1));
   ctx.save();
   ctx.beginPath();
@@ -92,7 +98,7 @@ export function drawTowerFit(
   ctx.clip();
   ctx.translate(box.x + box.w / 2, box.y + box.h - scale * 1);
   ctx.scale(scale, -scale);
-  drawPlatform(ctx);
-  for (const p of pieces) drawPiece(ctx, p);
+  drawPlatform(ctx, half);
+  for (const p of pieces) drawPiece(ctx, p, { mono: opts.mono });
   ctx.restore();
 }

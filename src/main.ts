@@ -3,7 +3,18 @@ import { Game } from "./game";
 import { glyphsReady } from "./glyph";
 import { drawTowerFit, type Piece } from "./render";
 import { ALL, BASE, INDEX, MERGED, kanji, mergeOf } from "./shared/kanji";
-import { compareScore, KIND_LABEL, KINDS, MAX_PLAYERS, normalizeName, type Kind, type Score } from "./shared/rules";
+import {
+  compareScore,
+  KIND_LABEL,
+  KINDS,
+  MAX_PLAYERS,
+  MODE,
+  MODES,
+  normalizeName,
+  type Kind,
+  type Mode,
+  type Score,
+} from "./shared/rules";
 import qrcode from "qrcode-generator";
 import { store } from "./storage";
 import { sfx } from "./sound";
@@ -44,9 +55,55 @@ function setSoundLabel() {
 $("btn-sound").onclick = () => {
   store.set({ sound: !store.get().sound });
   setSoundLabel();
+
+// ---------- 難易度 ----------
+function renderModePick() {
+  const cur = store.get().mode;
+  const box = $("mode-pick");
+  box.innerHTML = "";
+  for (const m of MODES) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.mode = m;
+    b.textContent = MODE[m].name;
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(m === cur));
+    b.onclick = () => {
+      store.set({ mode: m });
+      sfx("tick");
+      renderModePick();
+    };
+    box.append(b);
+  }
+  $("mode-desc").textContent = MODE[cur].desc;
+}
+renderModePick();
   sfx("tick");
 };
 setSoundLabel();
+
+// ---------- 難易度 ----------
+function renderModePick() {
+  const cur = store.get().mode;
+  const box = $("mode-pick");
+  box.innerHTML = "";
+  for (const m of MODES) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.mode = m;
+    b.textContent = MODE[m].name;
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(m === cur));
+    b.onclick = () => {
+      store.set({ mode: m });
+      sfx("tick");
+      renderModePick();
+    };
+    box.append(b);
+  }
+  $("mode-desc").textContent = MODE[cur].desc;
+}
+renderModePick();
 
 // ---------- ゲームの表示 ----------
 function renderHud(g: Game) {
@@ -58,10 +115,11 @@ function renderHud(g: Game) {
   tray.innerHTML = "";
   g.candidates.forEach((ch, i) => {
     const b = document.createElement("button");
-    const fit = tower.some((t) => mergeOf(ch, t));
+    const hints = g.def.hints;
+    const fit = hints && tower.some((t) => mergeOf(ch, t));
     b.className = `cell${i === g.selected ? " sel" : ""}${fit ? " fit" : ""}`;
-    b.innerHTML = `<span class="num">${i + 1}</span>${ch}<span class="st">${kanji(ch).strokes}画</span>`;
-    b.setAttribute("aria-label", `${ch}（${kanji(ch).strokes}画）${fit ? "合体できる" : ""}`);
+    b.innerHTML = `<span class="num">${i + 1}</span>${ch}${hints ? `<span class="st">${kanji(ch).strokes}画</span>` : ""}`;
+    b.setAttribute("aria-label", `${ch}${hints ? `（${kanji(ch).strokes}画）` : ""}${fit ? "合体できる" : ""}`);
     b.onclick = () => g.select(i);
     tray.append(b);
   });
@@ -74,10 +132,11 @@ function renderHud(g: Game) {
   } else if (!battle) banner.hidden = true;
 }
 
-function newGame(seed: number, endsAt?: number): Game {
+function newGame(seed: number, mode: Mode, endsAt?: number): Game {
   game?.destroy();
   const g = new Game($<HTMLCanvasElement>("canvas"), {
     seed,
+    mode,
     endsAt,
     onChange: renderHud,
     onMerge: (ch) => {
@@ -134,21 +193,22 @@ async function startSolo() {
   $("btn-pause").hidden = false;
   $("banner").hidden = true;
   show("play");
-  newGame((Math.random() * 2 ** 32) >>> 0);
+  newGame((Math.random() * 2 ** 32) >>> 0, store.get().mode);
 }
 $("btn-solo").onclick = startSolo;
 
-let lastResult: { score: Score; tower: Piece[]; made: string[]; playMs: number; drops: number } | null = null;
+let lastResult: { mode: Mode; score: Score; tower: Piece[]; made: string[]; playMs: number; drops: number } | null = null;
 
 function soloOver(g: Game) {
   const score = { ...g.best };
-  const updated = store.submitBest(score, g.bestTower);
-  lastResult = { score, tower: g.bestTower, made: [...g.made], playMs: g.playMs, drops: g.drops };
+  const mode = g.opts.mode;
+  const updated = store.submitBest(mode, score, g.bestTower);
+  lastResult = { mode, score, tower: g.bestTower, made: [...g.made], playMs: g.playMs, drops: g.drops };
   setTimeout(() => openResult(updated), 900);
 }
 
 // ---------- 結果 ----------
-function drawResultImage(canvas: HTMLCanvasElement, score: Score, tower: Piece[], made: string[], title = "合体！漢字タワー") {
+function drawResultImage(canvas: HTMLCanvasElement, mode: Mode, score: Score, tower: Piece[], made: string[], title = "合体！漢字タワー") {
   const ctx = canvas.getContext("2d")!;
   const W = 1200;
   const H = 630;
@@ -179,6 +239,16 @@ function drawResultImage(canvas: HTMLCanvasElement, score: Score, tower: Piece[]
   ctx.fillStyle = "#1d2321";
   ctx.font = '900 54px "Noto Serif JP", serif';
   ctx.fillText(title.replace("合体！", ""), 220, 78);
+  // 難易度のはんこ
+  ctx.font = '900 26px "Zen Maru Gothic", sans-serif';
+  const label = MODE[mode].name;
+  const lw = ctx.measureText(label).width + 28;
+  ctx.fillStyle = mode === "hard" ? "#e2412b" : "#1d2321";
+  ctx.beginPath();
+  ctx.roundRect(60, 118, lw, 44, 8);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, 74, 141);
   const rows: [string, string, string][] = [
     ["総画数", String(score.strokes), "画"],
     ["高さ", fmtH(score.height), "m"],
@@ -209,13 +279,13 @@ function drawResultImage(canvas: HTMLCanvasElement, score: Score, tower: Piece[]
   ctx.roundRect(700, 40, 460, 550, 16);
   ctx.fill();
   ctx.stroke();
-  drawTowerFit(ctx, tower, { x: 710, y: 50, w: 440, h: 530 });
+  drawTowerFit(ctx, tower, { x: 710, y: 50, w: 440, h: 530 }, 6, { half: MODE[mode].platformHalf, mono: MODE[mode].mono });
 }
 
 function openResult(updated: Kind[] = []) {
   if (!lastResult) return;
-  const { score, tower, made } = lastResult;
-  $("r-title").textContent = game?.overReason === "fall" ? "落ちた！" : "記録";
+  const { mode, score, tower, made } = lastResult;
+  $("r-title").innerHTML = `${game?.overReason === "fall" ? "落ちた！" : "記録"} <small>${MODE[mode].name}</small>`;
   $("r-battle").innerHTML = "";
   $("r-scores").innerHTML = KINDS.map(
     (k) =>
@@ -224,7 +294,7 @@ function openResult(updated: Kind[] = []) {
       }</b><small>${KIND_LABEL[k]}${k === "height" ? " m" : ""}</small></div>`,
   ).join("");
   $("r-made").textContent = made.length ? `作った字：${made.join("")}` : "";
-  document.fonts.ready.then(() => drawResultImage($<HTMLCanvasElement>("r-image"), score, tower, made));
+  document.fonts.ready.then(() => drawResultImage($<HTMLCanvasElement>("r-image"), mode, score, tower, made));
   const canSubmit = online() && !battle && score.count > 0;
   $("r-submit").hidden = !canSubmit;
   $<HTMLInputElement>("r-name").value = store.get().name;
@@ -250,8 +320,8 @@ $("r-submit").onsubmit = async (e) => {
   btn.disabled = true;
   setMsg("r-msg", "送信中…");
   try {
-    const ranks = await submitScore(name, { ...lastResult.score, playMs: lastResult.playMs, drops: lastResult.drops });
-    setMsg("r-msg", `登録しました：${KINDS.map((k) => `${KIND_LABEL[k]} ${ranks[k] ? `${ranks[k]}位` : "ランク外"}`).join("／")}`);
+    const ranks = await submitScore(lastResult.mode, name, { ...lastResult.score, playMs: lastResult.playMs, drops: lastResult.drops });
+    setMsg("r-msg", `${MODE[lastResult.mode].name}に登録しました：${KINDS.map((k) => `${KIND_LABEL[k]} ${ranks[k] ? `${ranks[k]}位` : "ランク外"}`).join("／")}`);
     $("r-submit").hidden = true;
   } catch (err) {
     setMsg("r-msg", `${(err as Error).message}。画像の保存はできます`, true);
@@ -277,12 +347,12 @@ function shareX(text: string) {
 
 $("r-share").onclick = () => {
   if (!lastResult) return;
-  const { score, made } = lastResult;
+  const { mode, score, made } = lastResult;
   let madeText = made.join("");
   if (madeText.length > 20) madeText = madeText.slice(0, 20) + "…";
   const head = battle && battleRank ? `対戦で${battleRank}位！ ` : "";
   shareX(
-    `${head}合体！漢字タワーで 総画数${score.strokes}・高さ${fmtH(score.height)}m・${score.count}字 積んだ！${
+    `${head}合体！漢字タワー（${MODE[mode].name}）で 総画数${score.strokes}・高さ${fmtH(score.height)}m・${score.count}字 積んだ！${
       madeText ? `\n作った字：${madeText}` : ""
     }\n#合体漢字タワー`,
   );
@@ -360,7 +430,23 @@ $("btn-dex").onclick = openDex;
 
 // ---------- ランキング ----------
 let rankKind: Kind = "strokes";
+let rankMode: Mode | null = null;
 function openRank() {
+  const dlgOpen = $<HTMLDialogElement>("dlg-rank").open;
+  if (!dlgOpen || !rankMode) rankMode = store.get().mode;
+  const modes = $("rank-modes");
+  modes.innerHTML = "";
+  for (const m of MODES) {
+    const b = document.createElement("button");
+    b.textContent = MODE[m].name;
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", String(m === rankMode));
+    b.onclick = () => {
+      rankMode = m;
+      openRank();
+    };
+    modes.append(b);
+  }
   const tabs = $("rank-tabs");
   tabs.innerHTML = "";
   for (const k of KINDS) {
@@ -374,7 +460,7 @@ function openRank() {
     };
     tabs.append(b);
   }
-  const best = store.get().best[rankKind];
+  const best = store.get().best[rankMode]?.[rankKind];
   $("rank-mine").textContent = best
     ? `自己ベスト：${rankKind === "height" ? fmtH(best.height) + " m" : best[rankKind]}（総画数${best.strokes}・高さ${fmtH(best.height)}m・${best.count}字）`
     : "自己ベストはまだありません";
@@ -385,9 +471,10 @@ function openRank() {
   if (!online()) return setMsg("rank-msg", "全国ランキングはサーバー設定後に表示されます");
   setMsg("rank-msg", "読み込み中…");
   const kind = rankKind;
-  getRanking(kind)
+  const mode = rankMode;
+  getRanking(mode, kind)
     .then((rows) => {
-      if (kind !== rankKind) return;
+      if (kind !== rankKind || mode !== rankMode) return;
       setMsg("rank-msg", rows.length ? "上位100件" : "まだ記録がありません。最初の1人になろう");
       list.innerHTML = rows
         .map((r, i) => {
@@ -501,6 +588,13 @@ $("room-leave").onclick = () => {
   setMsg("room-msg", "部屋を出ました");
 };
 $("room-start").onclick = () => battle?.client.send({ t: "start" });
+$("room-mode").onclick = () => {
+  const r = battle?.room;
+  if (!r || !battle!.isHost() || r.phase !== "lobby") return;
+  const next = MODES[(MODES.indexOf(r.mode) + 1) % MODES.length];
+  battle!.client.send({ t: "mode", mode: next });
+  sfx("tick");
+};
 $("room-invite").onclick = async () => {
   if (!battle?.room) return;
   const url = inviteUrl(battle.room.code);
@@ -536,6 +630,11 @@ function openRoomLobby() {
       $("room-qr").innerHTML = "";
     }
   }
+  const host0 = battle.isHost();
+  const modeBtn = $<HTMLButtonElement>("room-mode");
+  const canEdit = host0 && r.phase === "lobby";
+  modeBtn.textContent = `難易度：${MODE[r.mode].name}${canEdit ? "（タップで切りかえ）" : ""}`;
+  modeBtn.disabled = !canEdit;
   const active = r.players.filter((p) => p.status !== "left");
   $("room-count").textContent = `参加者 ${active.length}人（${MAX_PLAYERS}人まで）`;
   const statusTag: Record<string, string> = { playing: "対戦中", done: "終了", left: "通信切れ", lobby: "" };
@@ -643,7 +742,7 @@ function startBattleGame(room: RoomState) {
     const left = Math.ceil((startLocal - Date.now()) / 1000);
     if (left > 0) {
       banner.classList.remove("toast");
-      banner.innerHTML = `${left}<small>同じ字が同じ順で出ます</small>`;
+      banner.innerHTML = `${left}<small>${MODE[room.mode].name}・同じ字が同じ順で出ます</small>`;
       setTimeout(tick, 200);
       return;
     }
@@ -652,7 +751,7 @@ function startBattleGame(room: RoomState) {
     sfx("win");
     setTimeout(() => (banner.hidden = true), 700);
     void glyphsReady().then(() => {
-      if (battle === b) newGame(room.seed, endLocal);
+      if (battle === b) newGame(room.seed, room.mode, endLocal);
     });
     clearInterval(b.sendTimer);
     let n = 0;
@@ -675,7 +774,8 @@ function drawRival(id: string) {
   const ctx = r.canvas.getContext("2d")!;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, r.canvas.width, r.canvas.height);
-  drawTowerFit(ctx, r.tower, { x: 0, y: 0, w: r.canvas.width, h: r.canvas.height }, 4);
+  const def = MODE[battle?.room?.mode ?? "normal"];
+  drawTowerFit(ctx, r.tower, { x: 0, y: 0, w: r.canvas.width, h: r.canvas.height }, 4, { half: def.platformHalf, mono: def.mono });
   const el = document.querySelector<HTMLElement>(`.rival[data-id="${id}"] .sc`);
   if (el) el.textContent = `${r.score.strokes}画`;
 }
@@ -709,7 +809,7 @@ function battleOver(g: Game) {
   clearInterval(b.sendTimer);
   b.client.sendTower(g.best, g.pieces(), INDEX);
   b.client.send({ t: "done", score: g.best });
-  lastResult = { score: { ...g.best }, tower: g.bestTower, made: [...g.made], playMs: g.playMs, drops: g.drops };
+  lastResult = { mode: g.opts.mode, score: { ...g.best }, tower: g.bestTower, made: [...g.made], playMs: g.playMs, drops: g.drops };
   const banner = $("banner");
   banner.hidden = false;
   banner.classList.remove("toast");
@@ -724,7 +824,7 @@ function showBattleResult() {
   const order = [...r.players].filter((p) => p.status !== "left" || p.score.count > 0);
   const me = order.findIndex((p) => p.id === b.me);
   battleRank = me + 1;
-  if (!lastResult) lastResult = { score: { strokes: 0, height: 0, count: 0 }, tower: [], made: [], playMs: 0, drops: 0 };
+  if (!lastResult) lastResult = { mode: r.mode, score: { strokes: 0, height: 0, count: 0 }, tower: [], made: [], playMs: 0, drops: 0 };
   $("banner").hidden = true;
   openResult();
   $("r-title").textContent = battleRank === 1 ? "勝ち！" : `${battleRank}位`;

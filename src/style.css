@@ -94,6 +94,25 @@ button { cursor: pointer; }
 }
 .lead { margin: 0; text-align: center; color: var(--ink-soft); font-weight: 700; }
 .menu { width: min(100%, 320px); display: grid; gap: 12px; }
+/* 難易度 */
+.modes {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  width: min(100%, 320px);
+  border: 2px solid var(--ink); border-radius: 10px; overflow: hidden; background: #fff;
+}
+.modes button {
+  border: 0; border-left: 2px solid var(--ink); background: #fff;
+  padding: 9px 4px; font-weight: 900;
+}
+.modes button:first-child { border-left: 0; }
+.modes button[aria-checked="true"] { background: var(--ink); color: #fff; }
+.modes button[data-mode="hard"][aria-checked="true"] { background: var(--shu); }
+.mode-desc { margin: -12px 0 0; min-height: 1.5em; font-size: 13px; color: var(--ink-soft); font-weight: 700; text-align: center; }
+.credit {
+  position: absolute; bottom: calc(14px + var(--safe-b)); left: 0; right: 0;
+  text-align: center; font: 700 13px/1 var(--kanji); letter-spacing: .2em; color: var(--ink-soft);
+}
+#title { position: relative; }
 .sound {
   border: 0; background: none; color: var(--ink-soft);
   font-size: 14px; text-decoration: underline; text-underline-offset: 3px;
@@ -300,6 +319,12 @@ dialog > .row, dialog .row { margin-top: 10px; }
 .field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; font-size: 13px; font-weight: 700; }
 .join { display: flex; gap: 8px; }
 .join .btn { flex: none; }
+.lobby-mode {
+  border: 1.5px dashed var(--grid); background: var(--paper); border-radius: 8px;
+  padding: 8px 12px; font-weight: 700; text-align: center;
+}
+.lobby-mode:disabled { color: var(--ink); opacity: 1; cursor: default; }
+.modes-tabs button[aria-selected="true"] { background: var(--shu); border-color: var(--shu); }
 .code-label { margin: 0; text-align: center; font-weight: 700; color: var(--ink-soft); }
 
 /* 部屋番号：練習帳のマス目に1字ずつ */
