@@ -25,13 +25,37 @@ PC：←→ 移動、↑ 回転、↓ 落とす、1〜3 選択、Space 一時停
 | 部分 | 置き場所 | 中身 |
 | --- | --- | --- |
 | ゲーム本体 | GitHub Pages | `src/`（TypeScript + Vite + Planck.js）。静的ファイルだけで動く |
-| ランキング API | Cloudflare Workers | `server/worker.ts` の `/api/ranking`・`/api/scores` |
-| 記録 | Cloudflare D1 | `server/migrations/` |
-| 対戦の部屋 | Cloudflare Durable Objects | `server/worker.ts` の `Room`。WebSocket で部屋ごとに状態を持つ |
+| 対戦・ランキング | Firebase Realtime Database | prefpack・おでこでお題当て と同じ `odeko-ddb38`。通信は `src/api.ts`、設定は `src/firebase.ts` |
 
-サーバーを設定しなくても、ひとり用・図鑑・自己ベスト・画像保存は使える（ランキングと対戦だけが無効になる）。
+Firebase はランキングか対戦を開いたときに読み込むので、ひとり用はすぐ始まる。つながらなくても、ひとり用・図鑑・自己ベスト・画像保存は使える。
 
-対戦の通信は、各自が0.5秒ごとに自分の塔を送り、サーバーが0.4秒ごとに変化分を1通にまとめて全員へ配る。人数が増えても1人が受け取る通数は一定。
+### データの置き場所
+
+ほかのゲームとぶつからないよう、すべて `rooms/kanji-` で始まるキーに置く。
+
+| キー | 中身 |
+| --- | --- |
+| `rooms/kanji-<部屋番号>` | 部屋（部屋主、状態、回、種、開始・終了時刻）と `players/<id>`（名前、接続中か、状態、記録） |
+| `rooms/kanji-<部屋番号>-live` | 対戦中の各自の塔。部屋本体と分けて通信を軽くしている |
+| `rooms/kanji-ranking` | 種目ごとの記録。`created` を 9e15 にして、部屋の自動おそうじの対象から外している |
+
+- 作ってから24時間たった `kanji-` の部屋は、次に部屋を作ったときに自動で消える（prefpack の `pref-` やお題当ての部屋には触れない）
+- 対戦の終了（時間切れ・全員終了）は部屋主の端末が決める。部屋主が抜けると、いちばん早く入った人が引き継ぐ
+- 対戦中の塔は、人数が多いほど送る間隔をあける（0.5秒、50人なら3秒）。1人が受け取る通信量がおさえられる
+
+Firebase のルールは prefpack と同じで、変更は不要：
+
+```json
+{
+  "rules": {
+    "rooms": {
+      ".read": true,
+      ".indexOn": ["created"],
+      "$room": { ".write": true }
+    }
+  }
+}
+```
 
 ## 手元で動かす
 
@@ -39,22 +63,12 @@ Node.js 22 以降。
 
 ```sh
 npm ci
-npm run dev            # http://127.0.0.1:5173 （ひとり用だけ）
+npm run dev            # http://127.0.0.1:5173
 ```
 
-ランキングと対戦も試す場合：
+同じ Wi-Fi のスマホで試すなら `npm run dev:lan`。対戦・ランキングは本番と同じ Firebase につながる。
 
-```sh
-npm run db:migrate:local
-npm run dev:api        # http://127.0.0.1:8787
-# 別のターミナルで
-echo "VITE_API_BASE=http://127.0.0.1:8787" > .env.development.local
-npm run dev
-```
-
-同じ Wi-Fi のスマホで試すなら `npm run dev:lan`。
-
-検証：
+検証（対戦とランキングのテストは、Firebase をまねたメモリー上のデータベース `tests/fakeFirebase.ts` で動く）：
 
 ```sh
 npm test
@@ -62,39 +76,13 @@ npm run typecheck
 npm run build
 ```
 
-## 公開する
+## 公開する（GitHub Pages）
 
-### 1. Cloudflare（ランキング・対戦サーバー）
+1. Settings → Pages → Source を「GitHub Actions」にする
+2. main に push すると、テスト・ビルド・公開が走る（`.github/workflows/deploy-pages.yml`）
+3. `https://junnn665.github.io/kanji-tower/` で遊べる
 
-無料プランで動く（D1、SQLite 版 Durable Objects）。
-
-```sh
-npx wrangler login
-npx wrangler d1 create kanji-tower      # 表示された database_id を wrangler.jsonc に書く
-```
-
-`wrangler.jsonc` の `ALLOWED_ORIGINS` を公開するオリジン（例：`https://your-name.github.io`、パスは含めない）に変えてから：
-
-```sh
-npm run db:migrate
-npm run deploy:worker                   # 表示された Worker の URL を控える
-curl https://<Worker の URL>/health     # {"ok":true} なら OK
-```
-
-### 2. GitHub Pages（ゲーム本体）
-
-1. このフォルダーの中身をリポジトリのルートに push する
-2. Settings → Pages → Source を「GitHub Actions」にする
-3. Settings → Secrets and variables → Actions → Variables に次を追加する
-   - `API_BASE`：Worker の URL（末尾のスラッシュなし）
-   - `PUBLIC_URL`：ゲームの URL（例：`https://your-name.github.io/kanji-tower/`）
-4. main に push すると、テスト・ビルド・公開が走る（`.github/workflows/deploy-pages.yml`）
-
-### 更新
-
-- ゲーム：main に push
-- サーバー：`npm run deploy:worker`
-- DB の変更：`server/migrations/` に番号を続けたファイルを足して `npm run db:migrate`
+iPhone は Safari の共有ボタン →「ホーム画面に追加」、Android は Chrome のメニュー →「ホーム画面に追加」で、アイコン付きの全画面アプリとして開ける。
 
 ## ホーム画面のアイコン
 
@@ -108,10 +96,9 @@ python3 tools/build-icons.py
 
 ## ランキングと保存する情報
 
-- 種目は総画数・高さ・字数。最近90日の上位100件を表示する
-- 送信は結果画面で利用者が「ランキングに登録」を押したときだけ
-- 公開するのは名前・3つの記録・日時。プレイ時間・落とした回数・端末識別子のハッシュは不正確認のためにだけ保存し、公開しない
-- 1端末あたり1分に6件まで。明らかにありえない記録ははじくが、ブラウザーで動くゲームなので改ざんを完全には防げない
+- 種目は総画数・高さ・字数。上位100件を表示し、データベースには各種目200件ほどを残す
+- 送信は結果画面で利用者が「ランキングに登録」を押したときだけ。保存するのは名前・3つの記録・日時
+- 明らかにありえない記録や連続送信は端末側ではじくが、データベースのルールで制限していないので、改ざんは防げない
 - 図鑑・自己ベスト・音の設定・ランダムな端末識別子は端末の localStorage に保存する
 
 ## ライセンス

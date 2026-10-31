@@ -248,7 +248,7 @@ $("r-submit").onsubmit = async (e) => {
   setMsg("r-msg", "送信中…");
   try {
     const ranks = await submitScore(name, { ...lastResult.score, playMs: lastResult.playMs, drops: lastResult.drops });
-    setMsg("r-msg", `登録しました：${KINDS.map((k) => `${KIND_LABEL[k]} ${ranks[k]}位`).join("／")}`);
+    setMsg("r-msg", `登録しました：${KINDS.map((k) => `${KIND_LABEL[k]} ${ranks[k] ? `${ranks[k]}位` : "ランク外"}`).join("／")}`);
     $("r-submit").hidden = true;
   } catch (err) {
     setMsg("r-msg", `${(err as Error).message}。画像の保存はできます`, true);
@@ -385,7 +385,7 @@ function openRank() {
   getRanking(kind)
     .then((rows) => {
       if (kind !== rankKind) return;
-      setMsg("rank-msg", rows.length ? "最近90日の上位100件" : "まだ記録がありません。最初の1人になろう");
+      setMsg("rank-msg", rows.length ? "上位100件" : "まだ記録がありません。最初の1人になろう");
       list.innerHTML = rows
         .map((r, i) => {
           const v = kind === "height" ? `${fmtH(r.height)}<small>m</small>` : String(r[kind]);
