@@ -1,7 +1,8 @@
-import { Body, Box, Polygon, Vec2, World } from "planck";
+import { Body, Box, Vec2, World } from "planck";
 import { kanji, mergeOf } from "./shared/kanji";
 import { pickCandidates, rng, type Score } from "./shared/rules";
-import { drawPiece, drawPlatform, outline, PLATFORM_H, PLATFORM_HALF, type Piece } from "./render";
+import { glyphRects } from "./glyph";
+import { drawPiece, drawPlatform, PLATFORM_H, PLATFORM_HALF, type Piece } from "./render";
 import { sfx } from "./sound";
 
 interface Meta {
@@ -146,9 +147,11 @@ export class Game {
   }
 
   private makeBody(ch: string, x: number, y: number, angle: number, landed: boolean): Body {
-    const body = this.world.createBody({ type: "dynamic", position: Vec2(x, y), angle });
-    const pts = outline(ch).map(([px, py]) => Vec2(px, py));
-    body.createFixture(new Polygon(pts), { density: 1, friction: 0.8, restitution: 0.02 });
+    // 少し回りにくく・すべりにくくして、字の形でも積みやすくする
+    const body = this.world.createBody({ type: "dynamic", position: Vec2(x, y), angle, angularDamping: 0.6, linearDamping: 0.05 });
+    // 字の形をなぞった長方形の集まり
+    for (const [cx, cy, hw, hh] of glyphRects(ch))
+      body.createFixture(new Box(hw, hh, Vec2(cx, cy)), { density: 1, friction: 1.0, restitution: 0 });
     body.setUserData({ ch, landed, alive: true, flash: 0 } satisfies Meta);
     return body;
   }

@@ -127,9 +127,13 @@
       </div>
       <div id="room-lobby" hidden>
         <p class="code-label">部屋番号</p>
-        <p id="room-code-big" class="code-big"></p>
-        <div class="row">
-          <button id="room-invite" class="btn">招待リンクを送る</button>
+        <div id="room-tiles" class="tiles" aria-label="部屋番号"></div>
+        <div class="invite">
+          <div id="room-qr" class="qr" role="img" aria-label="招待リンクのQRコード"></div>
+          <div class="invite-side">
+            <p>みんなに番号を伝えるか、<br />カメラでQRを読んでもらおう</p>
+            <button id="room-invite" class="btn small">招待リンクを送る</button>
+          </div>
         </div>
         <p id="room-count" class="code-label"></p>
         <ul id="room-players" class="players"></ul>

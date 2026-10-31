@@ -1,3 +1,4 @@
+import { GLYPH_PX, setGlyphFont } from "./glyph";
 import { kanji, sizeOf } from "./shared/kanji";
 
 /** 塔の1字ぶん（通信・保存・画像にも使う） */
@@ -11,31 +12,13 @@ export interface Piece {
 export const PLATFORM_HALF = 2.6;
 export const PLATFORM_H = 0.5;
 
-const PALETTE = ["#f7d6d0", "#d8e8f6", "#dcefd8", "#f4e6c4", "#e6dcf3", "#d4efec", "#f6dce9"];
+// 字そのものを塗る色（墨の縁取りで、明るい背景でも読める濃さ）
+const PALETTE = ["#e5735f", "#4f8fd0", "#4fae6c", "#d9a032", "#8f6fcf", "#2fa39a", "#d9679d"];
 
 export function colorOf(ch: string): string {
   const k = kanji(ch);
-  if (k.strokes >= 10) return "#f3c96b";
+  if (k.strokes >= 10) return "#f0b429";
   return PALETTE[ch.codePointAt(0)! % PALETTE.length];
-}
-
-/** 形の頂点（体の中心が原点） */
-export function outline(ch: string): [number, number][] {
-  const { w, h } = sizeOf(ch);
-  if (kanji(ch).shape === "tri") {
-    // 重心を原点に合わせる
-    return [
-      [-w / 2, -h / 3],
-      [w / 2, -h / 3],
-      [0, (2 * h) / 3],
-    ];
-  }
-  return [
-    [-w / 2, -h / 2],
-    [w / 2, -h / 2],
-    [w / 2, h / 2],
-    [-w / 2, h / 2],
-  ];
 }
 
 export interface PieceStyle {
@@ -44,41 +27,37 @@ export interface PieceStyle {
   flash?: number; // 0..1 合体直後の白い光
 }
 
-/** ctx は「1単位 = 1m、y が上向き」に変換済みであること */
+/**
+ * 字の形だけを描く（枠なし）。当たり判定と同じ置き方（glyph.ts）で描く。
+ * ctx は「1単位 = 1m、y が上向き」に変換済みであること。
+ */
 export function drawPiece(ctx: CanvasRenderingContext2D, p: Piece, style: PieceStyle = {}) {
-  const pts = outline(p.ch);
-  const { w, h } = sizeOf(p.ch);
-  const tri = kanji(p.ch).shape === "tri";
+  const k = sizeOf(p.ch) / GLYPH_PX;
   ctx.save();
   ctx.translate(p.x, p.y);
   ctx.rotate(p.a);
+  ctx.scale(k, -k);
   ctx.globalAlpha = style.alpha ?? 1;
-  ctx.beginPath();
-  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-  ctx.closePath();
+  setGlyphFont(ctx);
+  ctx.lineJoin = "round";
+  ctx.miterLimit = 2;
   if (style.glow) {
     ctx.shadowColor = "#ffb300";
-    ctx.shadowBlur = 18;
+    ctx.shadowBlur = 16;
+    ctx.lineWidth = 14;
+    ctx.strokeStyle = "#ffc93c";
+    ctx.strokeText(p.ch, 0, 0);
+    ctx.shadowBlur = 0;
   }
+  ctx.lineWidth = 7;
+  ctx.strokeStyle = "#1d2321";
+  ctx.strokeText(p.ch, 0, 0);
   ctx.fillStyle = colorOf(p.ch);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.lineJoin = "round";
-  ctx.lineWidth = style.glow ? 0.09 : 0.045;
-  ctx.strokeStyle = style.glow ? "#ffb300" : "#3a2f2a";
-  ctx.stroke();
+  ctx.fillText(p.ch, 0, 0);
   if (style.flash) {
     ctx.fillStyle = `rgba(255,255,255,${style.flash})`;
-    ctx.fill();
+    ctx.fillText(p.ch, 0, 0);
   }
-  // 文字（y を戻して描く）
-  const size = Math.min(w, h) * (tri ? 0.62 : 0.8);
-  ctx.scale(1, -1);
-  ctx.fillStyle = "#231c18";
-  ctx.font = `700 ${size}px "Noto Serif JP", serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(p.ch, 0, tri ? -h * 0.02 : size * 0.04);
   ctx.restore();
 }
 

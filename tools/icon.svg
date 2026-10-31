@@ -16,15 +16,16 @@
   <rect x="136" y="384" width="240" height="30" rx="7" fill="#5b4636"/>
   <rect x="136" y="384" width="240" height="8" fill="#7a5f49"/>
 
-  <!-- 林（下） -->
-  <rect x="150" y="300" width="212" height="84" rx="4" fill="#f7d6d0" stroke="#1d2321" stroke-width="7"/>
-  <text x="256" y="340" font-family="Noto Serif CJK JP" font-weight="900" font-size="64" text-anchor="middle" dominant-baseline="central" fill="#1d2321">林</text>
+  <!-- 林（下）：ゲームと同じく枠なしの字そのもの -->
+  <text x="256" y="336" font-family="Noto Serif CJK JP" font-weight="900" font-size="112" text-anchor="middle" dominant-baseline="central"
+        fill="#e5735f" stroke="#1d2321" stroke-width="8" stroke-linejoin="round" paint-order="stroke">林</text>
 
-  <!-- 森（上、合体できる金の三角） -->
-  <g transform="rotate(-6 256 220)">
-    <polygon points="160,296 352,296 256,132" fill="#f0b429" filter="url(#glow)" opacity=".75"/>
-    <polygon points="160,296 352,296 256,132" fill="#f3c96b" stroke="#1d2321" stroke-width="7" stroke-linejoin="round"/>
-    <text x="256" y="250" font-family="Noto Serif CJK JP" font-weight="900" font-size="74" text-anchor="middle" dominant-baseline="central" fill="#1d2321">森</text>
+  <!-- 森（上、合体できる金色に光る） -->
+  <g transform="rotate(-7 250 200)">
+    <text x="250" y="200" font-family="Noto Serif CJK JP" font-weight="900" font-size="150" text-anchor="middle" dominant-baseline="central"
+          fill="none" stroke="#ffc93c" stroke-width="22" stroke-linejoin="round" filter="url(#glow)">森</text>
+    <text x="250" y="200" font-family="Noto Serif CJK JP" font-weight="900" font-size="150" text-anchor="middle" dominant-baseline="central"
+          fill="#f0b429" stroke="#1d2321" stroke-width="9" stroke-linejoin="round" paint-order="stroke">森</text>
   </g>
 
   <!-- 合体のはんこ -->

@@ -14,7 +14,8 @@
   "license": "ISC",
   "dependencies": {
     "firebase": "^13.1.0",
-    "planck": "^1.4.2"
+    "planck": "^1.4.2",
+    "qrcode-generator": "^2.0.4"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

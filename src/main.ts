@@ -1,8 +1,10 @@
 import "./style.css";
 import { Game } from "./game";
+import { glyphsReady } from "./glyph";
 import { drawTowerFit, type Piece } from "./render";
 import { ALL, BASE, INDEX, MERGED, kanji, mergeOf } from "./shared/kanji";
 import { compareScore, KIND_LABEL, KINDS, MAX_PLAYERS, normalizeName, type Kind, type Score } from "./shared/rules";
+import qrcode from "qrcode-generator";
 import { store } from "./storage";
 import { sfx } from "./sound";
 import {
@@ -123,7 +125,8 @@ window.addEventListener("keydown", (e) => {
 });
 
 // ---------- ひとり用 ----------
-function startSolo() {
+async function startSolo() {
+  await glyphsReady();
   closeAll();
   battle = null;
   $("timer").hidden = true;
@@ -500,7 +503,7 @@ $("room-leave").onclick = () => {
 $("room-start").onclick = () => battle?.client.send({ t: "start" });
 $("room-invite").onclick = async () => {
   if (!battle?.room) return;
-  const url = `${GAME_URL}?room=${battle.room.code}`;
+  const url = inviteUrl(battle.room.code);
   const text = `合体！漢字タワーで対戦しよう。部屋番号 ${battle.room.code}`;
   try {
     if (navigator.share) await navigator.share({ title: "合体！漢字タワー", text, url });
@@ -513,32 +516,51 @@ $("room-invite").onclick = async () => {
   }
 };
 
+let qrFor = "";
+const inviteUrl = (code: string) => `${GAME_URL.split("?")[0]}?room=${code}`;
+
 function openRoomLobby() {
   if (!battle?.room) return openRoomDialog();
   const r = battle.room;
   $("room-entry").hidden = true;
   $("room-lobby").hidden = false;
-  $("room-code-big").textContent = r.code;
-  $("room-count").textContent = `参加者 ${r.players.length}人（${MAX_PLAYERS}人まで）`;
+  $("room-tiles").innerHTML = [...r.code].map((d) => `<span class="tile">${d}</span>`).join("");
+  if (qrFor !== r.code) {
+    qrFor = r.code;
+    try {
+      const q = qrcode(0, "M");
+      q.addData(inviteUrl(r.code));
+      q.make();
+      $("room-qr").innerHTML = q.createSvgTag({ cellSize: 4, margin: 1, scalable: true });
+    } catch {
+      $("room-qr").innerHTML = "";
+    }
+  }
+  const active = r.players.filter((p) => p.status !== "left");
+  $("room-count").textContent = `参加者 ${active.length}人（${MAX_PLAYERS}人まで）`;
+  const statusTag: Record<string, string> = { playing: "対戦中", done: "終了", left: "通信切れ", lobby: "" };
   $("room-players").innerHTML = r.players
-    .map(
-      (p) =>
-        `<li><span>${esc(p.name)}${p.id === battle!.me ? "（あなた）" : ""}</span>${p.host ? '<span class="tag">部屋主</span>' : ""}</li>`,
-    )
+    .map((p) => {
+      const tags = [p.host ? "部屋主" : "", r.phase === "playing" ? statusTag[p.status] : p.status === "left" ? "通信切れ" : ""]
+        .filter(Boolean)
+        .join("・");
+      return `<li class="${p.status === "left" ? "off" : ""}"><span class="dot"></span><span class="nm">${esc(p.name)}${
+        p.id === battle!.me ? "（あなた）" : ""
+      }</span>${tags ? `<span class="tag">${esc(tags)}</span>` : ""}</li>`;
+    })
     .join("");
   const host = battle.isHost();
-  const enough = r.players.length >= 2;
-  $<HTMLButtonElement>("room-start").hidden = !host;
-  $<HTMLButtonElement>("room-start").disabled = !enough || r.phase !== "lobby";
+  $<HTMLButtonElement>("room-start").hidden = !host || r.phase !== "lobby";
+  $<HTMLButtonElement>("room-start").disabled = r.phase !== "lobby";
   setMsg(
     "room-wait",
     r.phase === "playing"
-      ? "対戦中です。終わるまで待ってください"
+      ? "いま対戦中です。次の回から参加できます"
       : host
-        ? enough
-          ? "全員そろったら始めましょう"
-          : "あと1人以上の参加を待っています"
-        : "部屋主が始めるのを待っています",
+        ? active.length < 2
+          ? "相手が入ってくるのを待とう（ひとりでも始められます）"
+          : `${active.length}人そろったら始めよう`
+        : "部屋主が始めるのを待っています…",
   );
   setMsg("room-msg", "");
   const dlg = $<HTMLDialogElement>("dlg-room");
@@ -629,7 +651,9 @@ function startBattleGame(room: RoomState) {
     banner.innerHTML = "始め！";
     sfx("win");
     setTimeout(() => (banner.hidden = true), 700);
-    newGame(room.seed, endLocal);
+    void glyphsReady().then(() => {
+      if (battle === b) newGame(room.seed, endLocal);
+    });
     clearInterval(b.sendTimer);
     let n = 0;
     b.sendTimer = window.setInterval(() => {
@@ -715,6 +739,9 @@ function showBattleResult() {
     .join("")}</table></div>`;
   document.querySelector(".battle-wrap tr.me")?.scrollIntoView({ block: "nearest" });
 }
+
+// 字形のフォントを先に読み込んでおく
+void glyphsReady();
 
 // 招待リンクから来た
 const roomParam = new URLSearchParams(location.search).get("room");
