@@ -4,9 +4,12 @@
 //   rooms/kanji-<4桁>        部屋：game, created, host, state, round, seed, startAt, endAt
 //     players/<pid>          name, joined, online, round, status("playing"|"done"), score, doneAt
 //   rooms/kanji-<4桁>-live   対戦中の塔：<pid> = { s: 記録, t: 塔(JSON) }。部屋本体と分けて通信を軽くする
+//   rooms/kanji-<4桁>-ev     おじゃま・スタンプ：<id> = { type, from, name, to, toTeam, ch, stamp, round, t }
+//   rooms/kanji-<4桁>-box-<A|B|C>  協力・チーム戦の塔：st（代表の端末が配る盤面）, cmd/<id>（番の人の操作）
 //   rooms/kanji-ranking      ランキング：created(=9e15、自動おそうじ対象外), <難易度 または daily-YYYYMMDD>/<種目>/<id> = 記録
 //
 // Firebase は使うときに読み込む（ひとり用は Firebase なしですぐ遊べる）。
+import type { BoxState, Command } from "./game";
 import type { Piece } from "./render";
 import { BATTLE_SECONDS, compareScore, isMode, KINDS, MAX_PLAYERS, plausible, type Kind, type Mode, type Score } from "./shared/rules";
 import { store } from "./storage";
@@ -35,6 +38,8 @@ const now = () => Date.now() + offset;
 const PID = () => store.get().device.replace(/-/g, "").slice(0, 16);
 const ROOM = (code: string) => `rooms/kanji-${code}`;
 const LIVE = (code: string) => `rooms/kanji-${code}-live`;
+const EV = (code: string) => `rooms/kanji-${code}-ev`;
+const BOX = (code: string, team: TeamId) => `rooms/kanji-${code}-box-${team}`;
 const RANK = "rooms/kanji-ranking";
 const ROOM_TTL = 24 * 60 * 60_000;
 
@@ -146,7 +151,15 @@ async function prune(mode: Board) {
   }
 }
 
-// ---------- 対戦 ----------
+// ---------- 対戦・協力・チーム戦 ----------
+
+/** vs：各自の塔で競う。coop：みんなで1つの塔を順番に。team：赤と青のチームで1つずつ */
+export type Play = "vs" | "coop" | "team";
+export const PLAYS: Play[] = ["vs", "coop", "team"];
+export const PLAY_LABEL: Record<Play, string> = { vs: "対戦", coop: "協力（みんなで1つの塔）", team: "チーム戦（赤・青）" };
+/** A・B：チーム戦の赤・青。C：協力の1つの塔 */
+export type TeamId = "A" | "B" | "C";
+export const TEAM_LABEL: Record<TeamId, string> = { A: "赤チーム", B: "青チーム", C: "みんな" };
 
 export interface RoomPlayer {
   id: string;
@@ -154,23 +167,54 @@ export interface RoomPlayer {
   host: boolean;
   status: "lobby" | "playing" | "done" | "left";
   score: Score;
+  spec: boolean;
+  team?: "A" | "B";
+}
+
+export interface TeamState {
+  id: TeamId;
+  host: string;
+  status: "playing" | "done";
+  score: Score;
+  members: string[];
 }
 
 export interface RoomState {
   code: string;
   mode: Mode;
+  play: Play;
+  jama: boolean;
   phase: "lobby" | "playing" | "result";
+  round: number;
   players: RoomPlayer[];
+  teams: TeamState[];
   seed: number;
   startsAt: number;
   endsAt: number;
 }
 
+export interface RoomEvent {
+  id: string;
+  type: "jama" | "stamp";
+  from: string;
+  name: string;
+  to?: string;
+  toTeam?: TeamId;
+  ch?: string;
+  stamp?: string;
+  round: number;
+  t: number;
+}
+
+/** 協力の盤面に、番の人と回を足したもの */
+export type SharedBox = BoxState & { r: number; turn: string; tn: string };
+
 export type ServerMsg =
   | { t: "you"; id: string }
   | { t: "room"; room: RoomState; now: number }
   | { t: "towers"; list: { id: string; score: Score; tower: [number, number, number, number][] }[] }
-  | { t: "error"; error: string };
+  | { t: "event"; ev: RoomEvent }
+  | { t: "error"; error: string; fatal?: boolean };
 
 interface FbPlayer {
   name: string;
@@ -178,6 +222,14 @@ interface FbPlayer {
   online?: boolean;
   round?: number;
   status?: "playing" | "done";
+  score?: Score;
+  spec?: boolean;
+  team?: "A" | "B";
+}
+
+interface FbTeam {
+  host: string;
+  status: "playing" | "done";
   score?: Score;
 }
 
@@ -187,11 +239,14 @@ interface FbRoom {
   host: string;
   state: "lobby" | "playing" | "result";
   mode?: Mode;
+  play?: Play;
+  jama?: boolean;
   round: number;
   seed: number;
   startAt: number;
   endAt: number;
   players?: Record<string, FbPlayer>;
+  teams?: Record<string, FbTeam>;
 }
 
 const ZERO: Score = { strokes: 0, height: 0, count: 0 };
@@ -200,6 +255,7 @@ const cleanScore = (s: unknown): Score => {
   const ok = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 && (n as number) < 100_000 ? (n as number) : 0);
   return v ? { strokes: ok(v.strokes), height: ok(v.height), count: ok(v.count) } : { ...ZERO };
 };
+const isPlay = (v: unknown): v is Play => PLAYS.includes(v as Play);
 
 export async function createRoom(host = PID()): Promise<string> {
   try {
@@ -209,7 +265,7 @@ export async function createRoom(host = PID()): Promise<string> {
       .then((snap) => {
         snap.forEach((c) => {
           const v = c.val();
-          if (/^kanji-\d{4}(-live)?$/.test(c.key!) && v && typeof v.created === "number" && v.created <= now() - ROOM_TTL)
+          if (/^kanji-\d{4}(-live|-ev|-box-[ABC])?$/.test(c.key!) && v && typeof v.created === "number" && v.created <= now() - ROOM_TTL)
             void m.remove(c.ref);
         });
       })
@@ -217,7 +273,7 @@ export async function createRoom(host = PID()): Promise<string> {
     for (let i = 0; i < 12; i++) {
       const code = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
       const t = now();
-      const room: FbRoom = { game: "kanji", created: t, host, state: "lobby", round: 0, seed: 0, startAt: 0, endAt: 0 };
+      const room: FbRoom = { game: "kanji", created: t, host, state: "lobby", play: "vs", jama: true, round: 0, seed: 0, startAt: 0, endAt: 0 };
       const r = await m.runTransaction(m.ref(m.db, ROOM(code)), (cur) => (cur ? undefined : room));
       if (r.committed) return code;
     }
@@ -234,13 +290,14 @@ export class RoomClient {
   private liveScores = new Map<string, Score>();
   private finishTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
+  private joinedAt = 0;
 
   constructor(
     readonly code: string,
     private name: string,
     private onMsg: (m: ServerMsg) => void,
     private onStatus: (s: "open" | "closed" | "retry") => void,
-    private me = PID(),
+    readonly me = PID(),
   ) {
     void this.join();
   }
@@ -264,6 +321,7 @@ export class RoomClient {
       return this.fail(netError(e).message);
     }
     if (this.closed) return;
+    this.joinedAt = now();
     const onlineRef = m.ref(m.db, `${ROOM(this.code)}/players/${this.me}/online`);
     void m.onDisconnect(onlineRef).set(false);
     // つながり直したら戻る
@@ -295,11 +353,19 @@ export class RoomClient {
       this.onMsg({ t: "towers", list: [{ id: s.key!, score, tower }] });
     };
     this.unsubs.push(m.onChildAdded(liveRef, onLive), m.onChildChanged(liveRef, onLive));
+    // おじゃま・スタンプ（入る前のものは無視）
+    this.unsubs.push(
+      m.onChildAdded(m.ref(m.db, EV(this.code)), (s) => {
+        const v = s.val();
+        if (!v || s.key === "created" || typeof v.t !== "number" || v.t < this.joinedAt - 3000) return;
+        this.onMsg({ t: "event", ev: { ...v, id: s.key! } });
+      }),
+    );
   }
 
+  /** 部屋に入れない・部屋がなくなった（理由を出してから部屋を出る） */
   private fail(error: string) {
-    this.onMsg({ t: "error", error });
-    this.onStatus("closed");
+    this.onMsg({ t: "error", error, fatal: true });
   }
 
   private onRoom(m: FB, v: FbRoom | null) {
@@ -328,26 +394,59 @@ export class RoomClient {
         const inRound = v.state !== "lobby" && p.round === v.round;
         const status: RoomPlayer["status"] =
           p.online === false ? "left" : inRound ? (p.status ?? "playing") : "lobby";
-        return { id, name: String(p.name ?? "名なし").slice(0, 12), host: id === v.host, status, score: cleanScore(p.score) };
+        return {
+          id,
+          name: String(p.name ?? "名なし").slice(0, 12),
+          host: id === v.host,
+          status,
+          score: cleanScore(p.score),
+          spec: !!p.spec,
+          team: p.team === "A" || p.team === "B" ? p.team : undefined,
+        };
       });
     if (v.state === "lobby") players = players.filter((p) => p.status !== "left");
     if (v.state === "result") {
       const inRound = new Set(Object.entries(v.players ?? {}).filter(([, p]) => p.round === v.round).map(([id]) => id));
       players = players
-        .filter((p) => inRound.has(p.id))
-        .sort((a, b) => compareScore("strokes", a.score, b.score));
+        .filter((p) => inRound.has(p.id) || p.spec)
+        .sort((a, b) => Number(a.spec) - Number(b.spec) || compareScore("strokes", a.score, b.score));
     }
-    return { code: this.code, mode: isMode(v.mode) ? v.mode : "normal", phase: v.state, players, seed: v.seed, startsAt: v.startAt, endsAt: v.endAt };
+    const teams: TeamState[] = Object.entries(v.teams ?? {})
+      .filter(([id]) => id === "A" || id === "B" || id === "C")
+      .map(([id, t]) => ({
+        id: id as TeamId,
+        host: t.host,
+        status: t.status,
+        score: cleanScore(t.score),
+        members: Object.entries(v.players ?? {})
+          .filter(([, p]) => p.round === v.round && !p.spec && (id === "C" || p.team === id))
+          .sort((a, b) => a[1].joined - b[1].joined)
+          .map(([pid]) => pid),
+      }))
+      .sort((a, b) => (v.state === "result" ? compareScore("strokes", a.score, b.score) : a.id.localeCompare(b.id)));
+    return {
+      code: this.code,
+      mode: isMode(v.mode) ? v.mode : "normal",
+      play: isPlay(v.play) ? v.play : "vs",
+      jama: v.jama !== false,
+      phase: v.state,
+      round: v.round,
+      players,
+      teams,
+      seed: v.seed,
+      startsAt: v.startAt,
+      endsAt: v.endAt,
+    };
   }
 
-  /** 部屋主がいなくなったら、いちばん早く入った人が引き継ぐ */
+  /** 部屋主がいなくなったら、いちばん早く入った人（観戦でない人を優先）が引き継ぐ */
   private maybeTakeHost(m: FB, v: FbRoom) {
     const ps = v.players ?? {};
     const h = ps[v.host];
     if (h && h.online !== false) return;
     const cands = Object.entries(ps)
       .filter(([, p]) => p.online !== false)
-      .sort((a, b) => a[1].joined - b[1].joined);
+      .sort((a, b) => Number(!!a[1].spec) - Number(!!b[1].spec) || a[1].joined - b[1].joined);
     if (cands[0]?.[0] !== this.me) return;
     const old = v.host;
     void m.runTransaction(m.ref(m.db, `${ROOM(this.code)}/host`), (cur) => (cur === old || cur == null ? this.me : undefined));
@@ -360,9 +459,17 @@ export class RoomClient {
       this.finishTimer = null;
       return;
     }
-    const parts = Object.entries(v.players ?? {}).filter(([, p]) => p.round === v.round);
-    const allDone = parts.every(([, p]) => p.status === "done" || p.online === false);
-    if (allDone && parts.length) return void this.finish(m, v.round);
+    const play = isPlay(v.play) ? v.play : "vs";
+    let allDone: boolean;
+    if (play === "vs") {
+      const parts = Object.entries(v.players ?? {}).filter(([, p]) => p.round === v.round && !p.spec);
+      allDone = parts.length > 0 && parts.every(([, p]) => p.status === "done" || p.online === false);
+    } else {
+      // 塔の代表が抜けたら、そのチームはそこまで
+      const teams = Object.entries(v.teams ?? {});
+      allDone = teams.length > 0 && teams.every(([, t]) => t.status === "done" || v.players?.[t.host]?.online === false);
+    }
+    if (allDone) return void this.finish(m, v.round);
     if (!this.finishTimer) {
       const wait = Math.max(0, v.endAt + 4000 - now());
       this.finishTimer = setTimeout(() => {
@@ -378,10 +485,11 @@ export class RoomClient {
     const up: Record<string, unknown> = { state: "result" };
     // 終わりを送れなかった人は、最後に届いた記録で確定する
     for (const [id, p] of Object.entries(v.players ?? {})) {
-      if (p.round !== round || p.status === "done") continue;
+      if (p.round !== round || p.status === "done" || p.spec) continue;
       up[`players/${id}/status`] = "done";
       up[`players/${id}/score`] = this.liveScores.get(id) ?? cleanScore(p.score);
     }
+    for (const [id, t] of Object.entries(v.teams ?? {})) if (t.status !== "done") up[`teams/${id}/status`] = "done";
     await m.update(m.ref(m.db, ROOM(this.code)), up).catch(() => {});
   }
 
@@ -390,6 +498,7 @@ export class RoomClient {
     if (!v || v.host !== this.me || v.state === "playing") return;
     const round = (v.round || 0) + 1;
     const startAt = now() + 3500;
+    const play = isPlay(v.play) ? v.play : "vs";
     const up: Record<string, unknown> = {
       state: "playing",
       round,
@@ -397,35 +506,92 @@ export class RoomClient {
       startAt,
       endAt: startAt + BATTLE_SECONDS * 1000,
     };
-    for (const [id, p] of Object.entries(v.players ?? {})) {
-      if (p.online === false) continue;
+    // teams は丸ごと書く（Firebase は同じ更新で親と子のパスを両方は書けない）
+    const teams: Record<string, FbTeam> = {};
+    const parts = Object.entries(v.players ?? {})
+      .filter(([, p]) => p.online !== false && !p.spec)
+      .sort((a, b) => a[1].joined - b[1].joined);
+    for (const [id] of parts) {
       up[`players/${id}/round`] = round;
       up[`players/${id}/status`] = "playing";
       up[`players/${id}/score`] = { ...ZERO };
     }
+    const boxes: TeamId[] = [];
+    if (play === "coop" && parts.length) {
+      const host = parts.find(([id]) => id === this.me)?.[0] ?? parts[0][0];
+      teams.C = { host, status: "playing", score: { ...ZERO } };
+      boxes.push("C");
+    }
+    if (play === "team" && parts.length) {
+      // 決めていない人は少ないほうへ。片方が空なら1人移す
+      const teamOf: Record<string, "A" | "B"> = {};
+      const cnt = { A: 0, B: 0 };
+      for (const [id, p] of parts)
+        if (p.team === "A" || p.team === "B") {
+          teamOf[id] = p.team;
+          cnt[p.team]++;
+        }
+      for (const [id] of parts)
+        if (!teamOf[id]) {
+          const t = cnt.A <= cnt.B ? "A" : "B";
+          teamOf[id] = t;
+          cnt[t]++;
+        }
+      for (const [t, o] of [["A", "B"], ["B", "A"]] as const)
+        if (!cnt[t] && cnt[o] >= 2) {
+          const mv = parts.filter(([id]) => teamOf[id] === o).pop()![0];
+          teamOf[mv] = t;
+          cnt[t]++;
+          cnt[o]--;
+        }
+      for (const [id] of parts) up[`players/${id}/team`] = teamOf[id];
+      for (const t of ["A", "B"] as const) {
+        const host = parts.find(([id]) => teamOf[id] === t)?.[0];
+        if (!host) continue;
+        teams[t] = { host, status: "playing", score: { ...ZERO } };
+        boxes.push(t);
+      }
+    }
+    up.teams = boxes.length ? teams : null;
     this.liveScores.clear();
     try {
       await m.set(m.ref(m.db, LIVE(this.code)), { created: now() });
+      await m.set(m.ref(m.db, EV(this.code)), { created: now() });
+      for (const t of boxes) await m.set(m.ref(m.db, BOX(this.code, t)), { created: now() });
       await m.update(m.ref(m.db, ROOM(this.code)), up);
     } catch (e) {
       this.onMsg({ t: "error", error: netError(e).message });
     }
   }
 
-  send(msg: { t: string; score?: Score; mode?: Mode }) {
+  send(msg: { t: string; score?: Score; mode?: Mode; play?: Play; on?: boolean; team?: "A" | "B" }) {
     void fb().then(async (m) => {
       const base = `${ROOM(this.code)}/players/${this.me}`;
+      const v = this.room;
+      const hostInLobby = v?.host === this.me && v.state !== "playing";
       switch (msg.t) {
         case "start":
           return this.start(m);
         case "done":
           return m.update(m.ref(m.db, base), { status: "done", score: cleanScore(msg.score), doneAt: now() }).catch(() => {});
         case "mode":
-          if (this.room?.host === this.me && this.room.state === "lobby" && isMode(msg.mode))
-            return m.update(m.ref(m.db, ROOM(this.code)), { mode: msg.mode }).catch(() => {});
+          if (hostInLobby && isMode(msg.mode)) return m.update(m.ref(m.db, ROOM(this.code)), { mode: msg.mode }).catch(() => {});
+          return;
+        case "play":
+          if (hostInLobby && isPlay(msg.play)) return m.update(m.ref(m.db, ROOM(this.code)), { play: msg.play }).catch(() => {});
+          return;
+        case "jama":
+          if (hostInLobby) return m.update(m.ref(m.db, ROOM(this.code)), { jama: !!msg.on }).catch(() => {});
+          return;
+        case "spec":
+          // 部屋主は観戦にできない（始める人がいなくなるため）
+          if (v?.host !== this.me) return m.update(m.ref(m.db, base), { spec: msg.on ? true : null }).catch(() => {});
+          return;
+        case "team":
+          if (v?.state !== "playing") return m.update(m.ref(m.db, base), { team: msg.team ?? null }).catch(() => {});
           return;
         case "rematch":
-          if (this.room?.host === this.me) return m.update(m.ref(m.db, ROOM(this.code)), { state: "lobby" }).catch(() => {});
+          if (v?.host === this.me) return m.update(m.ref(m.db, ROOM(this.code)), { state: "lobby" }).catch(() => {});
           return;
         case "leave": {
           const onlineRef = m.ref(m.db, `${base}/online`);
@@ -435,6 +601,13 @@ export class RoomClient {
         }
       }
     });
+  }
+
+  /** おじゃま・スタンプを送る */
+  sendEvent(ev: Omit<RoomEvent, "id" | "from" | "name" | "t">) {
+    void fb().then((m) =>
+      m.set(m.push(m.ref(m.db, EV(this.code))), { ...ev, from: this.me, name: this.name, t: now() }).catch(() => {}),
+    );
   }
 
   /** 人数が多いほど送る間隔をあけ、1人が受け取る通信量をおさえる */
@@ -447,6 +620,73 @@ export class RoomClient {
     const tower = pieces.map((p) => [index.get(p.ch)!, +p.x.toFixed(2), +p.y.toFixed(2), +p.a.toFixed(2)]);
     void fb().then((m) =>
       m.set(m.ref(m.db, `${LIVE(this.code)}/${this.me}`), { s: cleanScore(score), t: JSON.stringify(tower) }).catch(() => {}),
+    );
+  }
+
+  // ---------- 協力・チーム戦の塔 ----------
+
+  /** 塔の盤面を受け取る。止める関数を返す */
+  watchBox(team: TeamId, cb: (st: SharedBox) => void): () => void {
+    let un = () => {};
+    let stopped = false;
+    void fb().then((m) => {
+      if (stopped) return;
+      un = m.onValue(m.ref(m.db, `${BOX(this.code, team)}/st`), (s) => {
+        const v = s.val();
+        if (!v) return;
+        try {
+          cb({ ...v, p: typeof v.p === "string" ? JSON.parse(v.p) : v.p ?? [] });
+        } catch {
+          /* 壊れた盤面は無視 */
+        }
+      });
+    });
+    const stop = () => {
+      stopped = true;
+      un();
+    };
+    this.unsubs.push(stop);
+    return stop;
+  }
+
+  /** 代表の端末が盤面を配る（字の並びは文字列にして軽くする） */
+  pushBox(team: TeamId, st: SharedBox) {
+    void fb().then((m) => m.set(m.ref(m.db, `${BOX(this.code, team)}/st`), { ...st, p: JSON.stringify(st.p) }).catch(() => {}));
+  }
+
+  /** 番の人が操作を送る */
+  sendCmd(team: TeamId, cmd: Command) {
+    void fb().then((m) =>
+      m.set(m.push(m.ref(m.db, `${BOX(this.code, team)}/cmd`)), { ...cmd, from: this.me, r: this.room?.round ?? 0 }).catch(() => {}),
+    );
+  }
+
+  /** 代表の端末が操作を受け取る（受け取ったものは消す） */
+  watchCmds(team: TeamId, cb: (cmd: Command & { from: string; r: number }) => void): () => void {
+    let un = () => {};
+    let stopped = false;
+    void fb().then((m) => {
+      if (stopped) return;
+      un = m.onChildAdded(m.ref(m.db, `${BOX(this.code, team)}/cmd`), (s) => {
+        const v = s.val();
+        void m.remove(s.ref).catch(() => {});
+        if (v && typeof v.type === "string") cb(v);
+      });
+    });
+    const stop = () => {
+      stopped = true;
+      un();
+    };
+    this.unsubs.push(stop);
+    return stop;
+  }
+
+  /** 代表の端末がチームの記録を部屋に書く */
+  setTeam(team: TeamId, score: Score, done: boolean) {
+    void fb().then((m) =>
+      m
+        .update(m.ref(m.db, `${ROOM(this.code)}/teams/${team}`), { score: cleanScore(score), ...(done ? { status: "done" } : {}) })
+        .catch(() => {}),
     );
   }
 

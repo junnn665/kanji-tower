@@ -61,6 +61,84 @@ describe("対戦の部屋（Firebase）", () => {
     expect(b.room()!.room.players.map((p) => p.name)).toEqual(["あおい", "けんた"]);
   });
 
+  it("観戦の人は対戦に入らず、おじゃま・スタンプは届く", async () => {
+    const code = await createRoom("pA");
+    const a = player(code, "あおい", "pA");
+    const b = player(code, "けんた", "pB");
+    const w = player(code, "みる", "pW");
+    await tick();
+    w.client.send({ t: "spec", on: true });
+    a.client.send({ t: "spec", on: true }); // 部屋主は観戦にできない
+    await tick();
+    a.client.send({ t: "start" });
+    await tick();
+    const r = a.room()!.room;
+    expect(r.players.find((p) => p.id === "pW")).toMatchObject({ spec: true, status: "lobby" });
+    expect(r.players.find((p) => p.id === "pA")).toMatchObject({ spec: false, status: "playing" });
+    b.client.sendEvent({ type: "jama", to: "pA", ch: "鬱", round: r.round });
+    b.client.sendEvent({ type: "stamp", stamp: "👏", round: r.round });
+    await tick();
+    const evs = (x: typeof a) => x.msgs.filter((m) => m.t === "event").map((m) => (m as Extract<Msg, { t: "event" }>).ev);
+    expect(evs(a).map((e) => e.type)).toEqual(["jama", "stamp"]);
+    expect(evs(w)[0]).toMatchObject({ type: "jama", to: "pA", ch: "鬱", name: "けんた" });
+    // 観戦の人を除いた2人が終われば結果
+    a.client.send({ t: "done", score: { strokes: 5, height: 100, count: 1 } });
+    b.client.send({ t: "done", score: { strokes: 9, height: 100, count: 2 } });
+    await tick(40);
+    expect(a.room()!.room.phase).toBe("result");
+  });
+
+  it("協力：1つの塔を代表が配り、操作は代表に届く。代表が終われば結果", async () => {
+    const code = await createRoom("pA");
+    const a = player(code, "あおい", "pA");
+    const b = player(code, "けんた", "pB");
+    await tick();
+    a.client.send({ t: "play", play: "coop" });
+    await tick();
+    a.client.send({ t: "start" });
+    await tick();
+    const r = b.room()!.room;
+    expect(r.play).toBe("coop");
+    expect(r.teams).toHaveLength(1);
+    expect(r.teams[0]).toMatchObject({ id: "C", host: "pA", status: "playing", members: ["pA", "pB"] });
+    const seen: unknown[] = [];
+    b.client.watchBox("C", (st) => seen.push(st));
+    const cmds: unknown[] = [];
+    a.client.watchCmds("C", (c) => cmds.push(c));
+    await tick();
+    a.client.pushBox("C", { p: [[0, 0.1, 0.5, 0, 0]], c: ["木"], s: 0, x: 0, a: 0, now: { strokes: 4, height: 50, count: 1 }, best: { strokes: 4, height: 50, count: 1 }, over: null, made: [], words: [], drops: 1, ready: true, r: r.round, turn: "pB", tn: "けんた" });
+    b.client.sendCmd("C", { type: "drop", x: 0.5, a: 0, i: 0 });
+    await tick(40);
+    expect(seen.at(-1)).toMatchObject({ turn: "pB", p: [[0, 0.1, 0.5, 0, 0]] });
+    expect(cmds).toEqual([expect.objectContaining({ type: "drop", x: 0.5, from: "pB" })]);
+    a.client.setTeam("C", { strokes: 30, height: 300, count: 5 }, true);
+    await tick(40);
+    expect(b.room()!.room.phase).toBe("result");
+    expect(b.room()!.room.teams[0].score.strokes).toBe(30);
+  });
+
+  it("チーム戦：赤・青に分かれ、点の高いチームが先に並ぶ", async () => {
+    const code = await createRoom("pA");
+    const ps = ["pA", "pB", "pC", "pD"].map((id, i) => player(code, `人${i}`, id));
+    await tick();
+    ps[1].client.send({ t: "team", team: "A" });
+    ps[0].client.send({ t: "play", play: "team" });
+    await tick();
+    ps[0].client.send({ t: "start" });
+    await tick();
+    const r = ps[0].room()!.room;
+    expect(r.teams.map((t) => t.id)).toEqual(["A", "B"]);
+    expect(r.teams.map((t) => t.members.length)).toEqual([2, 2]);
+    expect(r.players.find((p) => p.id === "pB")?.team).toBe("A");
+    ps[0].client.setTeam(r.teams[0].host === "pA" ? "A" : "B", { strokes: 10, height: 100, count: 2 }, true);
+    const other = r.teams.find((t) => t.host !== "pA")!;
+    ps.find((p) => p.client.me === other.host)!.client.setTeam(other.id, { strokes: 40, height: 200, count: 5 }, true);
+    await tick(40);
+    const res = ps[0].room()!.room;
+    expect(res.phase).toBe("result");
+    expect(res.teams[0].id).toBe(other.id);
+  });
+
   it("部屋主だけが待合室で難易度を変えられる", async () => {
     const code = await createRoom("pA");
     const a = player(code, "あおい", "pA");

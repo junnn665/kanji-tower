@@ -50,6 +50,31 @@ function notify() {
   queueMicrotask(() => [...listeners].forEach((l) => l.fire()));
 }
 
+// ブラウザーで画面を確かめるときは、同じブラウザーのタブどうしでデータを共有する（対戦を試すため）
+const chan = typeof window !== "undefined" && typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("fake-firebase") : null;
+let synced: () => void = () => {};
+const ready: Promise<void> = chan ? new Promise((r) => ((synced = r), setTimeout(r, 500))) : Promise.resolve();
+if (chan) {
+  chan.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === "w") {
+      for (const [path, v] of m.writes as [string, Json][]) write(path, v);
+      notify();
+    } else if (m.type === "sync?") chan.postMessage({ type: "sync", root });
+    else if (m.type === "sync" && Object.keys(root).length === 0) {
+      root = m.root;
+      synced();
+      notify();
+    }
+  };
+  chan.postMessage({ type: "sync?" });
+}
+function commit(writes: [string, Json][]) {
+  for (const [path, v] of writes) write(path, v);
+  chan?.postMessage({ type: "w", writes: JSON.parse(JSON.stringify(writes.map(([p, v]) => [p, v ?? null]))) });
+  notify();
+}
+
 class Snap {
   constructor(
     readonly key: string | null,
@@ -105,18 +130,22 @@ export const endAt = (v: number | string): Cons => ({ kind: "endAt", v });
 export const startAt = (v: number | string): Cons => ({ kind: "startAt", v });
 export const orderByKey = (): Cons => ({ kind: "orderByKey" });
 
-export const get = async (r: Ref) => snapOf(r);
-export const set = async (r: Ref, v: Json) => {
-  write(r.path, v);
-  notify();
+export const get = async (r: Ref) => {
+  await ready;
+  return snapOf(r);
 };
+export const set = async (r: Ref, v: Json) => commit([[r.path, v]]);
 export const update = async (r: Ref, v: Record<string, Json>) => {
-  for (const [k, x] of Object.entries(v)) write(`${r.path}/${k}`, x);
-  notify();
+  const ks = Object.keys(v);
+  for (const k of ks)
+    if (ks.some((o) => o !== k && o.startsWith(k + "/")))
+      throw new Error(`Reference.update failed: ${k} is an ancestor of another path`);
+  commit(Object.entries(v).map(([k, x]) => [`${r.path}/${k}`, x]));
 };
 export const remove = async (r: Ref) => set(r, null);
-export const push = (r: Ref) => ref(db, `${r.path}/k${String(++pushN).padStart(6, "0")}`);
+export const push = (r: Ref) => ref(db, `${r.path}/k${Date.now().toString(36)}${String(++pushN).padStart(4, "0")}${Math.random().toString(36).slice(2, 6)}`);
 export const runTransaction = async (r: Ref, fn: (cur: Json) => Json) => {
+  await ready;
   const res = fn(read(r.path));
   if (res === undefined) return { committed: false, snapshot: snapOf(r) };
   await set(r, res);

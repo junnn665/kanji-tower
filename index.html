@@ -67,6 +67,13 @@
         <div class="board">
           <canvas id="canvas"></canvas>
           <button id="btn-rotate" class="rotate" aria-label="回転">↻ 回転</button>
+          <div id="turn" class="turn" hidden></div>
+          <button id="btn-stamp" class="stamp-btn" aria-label="スタンプ" hidden>スタンプ</button>
+          <div id="stamp-bar" class="stamp-bar" hidden>
+            <button data-stamp="👏">👏</button><button data-stamp="😱">😱</button><button data-stamp="🔥">🔥</button>
+            <button data-stamp="😂">😂</button><button data-stamp="👍">👍</button><button data-stamp="ナイス！">ナイス！</button>
+          </div>
+          <div id="my-stamp" class="my-stamp" aria-live="polite"></div>
           <div id="banner" class="banner" hidden></div>
         </div>
         <nav id="tray" class="tray" aria-label="次に落とす字"></nav>
@@ -154,14 +161,39 @@
             <button id="room-invite" class="btn small">招待リンクを送る</button>
           </div>
         </div>
+        <button id="room-play" class="lobby-mode" type="button"></button>
         <button id="room-mode" class="lobby-mode" type="button"></button>
+        <button id="room-jama" class="lobby-mode" type="button"></button>
+        <div id="room-team-pick" class="team-pick" hidden>
+          <button type="button" data-team="A" class="team-a">赤チームに入る</button>
+          <button type="button" data-team="B" class="team-b">青チームに入る</button>
+        </div>
         <p id="room-count" class="code-label"></p>
         <ul id="room-players" class="players"></ul>
         <button id="room-start" class="btn primary">対戦を始める</button>
+        <button id="room-spec" class="btn small" type="button">観戦する</button>
         <p id="room-wait" class="msg"></p>
         <button id="room-leave" class="btn">部屋を出る</button>
       </div>
       <p id="room-msg" class="msg" role="status"></p>
+    </dialog>
+
+    <!-- 観戦 -->
+    <dialog id="dlg-watch" class="sheet">
+      <header class="sheet-head">
+        <h2 id="watch-title">観戦中</h2>
+        <button id="watch-stamp" class="btn small" type="button">スタンプ</button>
+      </header>
+      <p id="watch-sub" class="msg"></p>
+      <div id="watch-grid" class="watch-grid"></div>
+      <div id="watch-stamps" class="stamp-bar inline" hidden>
+        <button data-stamp="👏">👏</button><button data-stamp="😱">😱</button><button data-stamp="🔥">🔥</button>
+        <button data-stamp="😂">😂</button><button data-stamp="👍">👍</button><button data-stamp="ナイス！">ナイス！</button>
+      </div>
+      <div class="row watch-actions">
+        <button id="watch-lobby" class="btn" type="button">待合室へ</button>
+        <button id="watch-leave" class="btn" type="button">部屋を出る</button>
+      </div>
     </dialog>
 
     <script type="module" src="./src/main.ts"></script>

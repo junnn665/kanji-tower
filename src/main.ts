@@ -1,8 +1,8 @@
 import "./style.css";
-import { Game } from "./game";
+import { Game, type GameOptions } from "./game";
 import { glyphsReady } from "./glyph";
 import { drawTowerFit, type Piece } from "./render";
-import { ALL, BASE, INDEX, MERGED, NET_CHARS, WORDS, isJama, kanji, mergeOf, wordReading } from "./shared/kanji";
+import { ALL, BASE, INDEX, JAMA, MERGED, NET_CHARS, WORDS, isJama, kanji, mergeOf, wordReading } from "./shared/kanji";
 import { canRecord, playReplay, recordReplay, saveFile } from "./replay";
 import {
   compareScore,
@@ -18,16 +18,21 @@ import {
 } from "./shared/rules";
 import qrcode from "qrcode-generator";
 import { store } from "./storage";
-import { sfx } from "./sound";
+import { buzz, sfx } from "./sound";
 import {
   API,
   createRoom,
   getRanking,
   online,
+  PLAY_LABEL,
+  PLAYS,
   RoomClient,
   submitScore,
+  TEAM_LABEL,
+  type RoomEvent,
   type RoomState,
   type ServerMsg,
+  type TeamId,
 } from "./api";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -160,16 +165,16 @@ function renderHud(g: Game) {
   } else if (!battle) banner.hidden = true;
 }
 
-function newGame(seed: number, mode: Mode, endsAt?: number, dropLimit?: number): Game {
+function newGame(seed: number, mode: Mode, extra: Partial<GameOptions> = {}): Game {
   game?.destroy();
   const g = new Game($<HTMLCanvasElement>("canvas"), {
     seed,
     mode,
-    dropLimit,
-    endsAt,
+    ...extra,
     onChange: renderHud,
     onMerge: (ch) => {
       if (store.discover(ch)) toast(`新しい字「${ch}」を発見！`);
+      if (battle) sendJamaFor(ch);
     },
     onWord: (w) => {
       if (store.discoverWord(w)) toast(`新しい熟語「${w}」（${wordReading(w)}）！`);
@@ -261,7 +266,7 @@ async function startDaily() {
   $("btn-pause").hidden = false;
   $("banner").hidden = true;
   show("play");
-  newGame(dailySeed(date), "normal", undefined, DAILY_DROPS);
+  newGame(dailySeed(date), "normal", { dropLimit: DAILY_DROPS });
   toast(dailyNow.practice ? `今日のお題（${dailyLabel(date)}）練習` : `今日のお題（${dailyLabel(date)}）本番！ 20字で勝負`);
 }
 $("btn-daily").onclick = startDaily;
@@ -687,19 +692,33 @@ function openRank(prefer?: Mode | "daily") {
 }
 $("btn-rank").onclick = () => openRank();
 
-// ---------- 対戦 ----------
+// ---------- 対戦・協力・チーム戦・観戦 ----------
+interface Rival {
+  canvas: HTMLCanvasElement;
+  score: Score;
+  tower: Piece[];
+}
 interface Battle {
   client: RoomClient;
   me: string;
   room: RoomState | null;
   offset: number; // サーバー時刻 - 端末時刻
   startedFor: number;
-  rivals: Map<string, { canvas: HTMLCanvasElement; score: Score; tower: Piece[] }>;
+  rivals: Map<string, Rival>;
   sendTimer: number;
+  /** 協力・チーム戦：自分の塔と、番の人 */
+  myTeam: TeamId | null;
+  boxHost: boolean;
+  turn: string;
+  stops: (() => void)[];
+  watching: boolean;
   isHost(): boolean;
 }
 let battle: Battle | null = null;
 let battleRank = 0;
+
+const playerName = (id: string) => battle?.room?.players.find((p) => p.id === id)?.name ?? "だれか";
+const meIn = (r: RoomState | null | undefined) => r?.players.find((p) => p.id === battle?.me);
 
 function openRoomDialog(code = "") {
   const dlg = $<HTMLDialogElement>("dlg-room");
@@ -707,7 +726,7 @@ function openRoomDialog(code = "") {
   $("room-lobby").hidden = !battle;
   $<HTMLInputElement>("room-name").value = store.get().name;
   $<HTMLInputElement>("room-code").value = code;
-  setMsg("room-msg", online() ? "" : "対戦はサーバー設定後に使えます（README 参照）", !online());
+  setMsg("room-msg", "");
   if (!dlg.open) dlg.showModal();
 }
 $("btn-battle").onclick = () => (battle ? openRoomLobby() : openRoomDialog());
@@ -723,7 +742,6 @@ function roomName(): string | null {
 }
 
 $("room-create").onclick = async () => {
-  if (!online()) return;
   const name = roomName();
   if (!name) return;
   setMsg("room-msg", "部屋を作っています…");
@@ -736,7 +754,6 @@ $("room-create").onclick = async () => {
 
 $("room-join").onsubmit = (e) => {
   e.preventDefault();
-  if (!online()) return;
   const code = $<HTMLInputElement>("room-code").value.trim();
   if (!/^\d{4}$/.test(code)) return setMsg("room-msg", "部屋番号は4桁の数字です", true);
   const name = roomName();
@@ -753,6 +770,11 @@ function joinRoom(code: string, name: string) {
     startedFor: 0,
     rivals: new Map(),
     sendTimer: 0,
+    myTeam: null,
+    boxHost: false,
+    turn: "",
+    stops: [],
+    watching: false,
     isHost() {
       return !!this.room?.players.find((p) => p.id === this.me)?.host;
     },
@@ -768,17 +790,26 @@ function joinRoom(code: string, name: string) {
   history.replaceState(null, "", `?room=${code}`);
 }
 
+function stopRound(b: Battle) {
+  clearInterval(b.sendTimer);
+  b.stops.forEach((f) => f());
+  b.stops = [];
+}
+
 function leaveRoom() {
   battle?.client.close();
   endBattleLocal();
 }
 
 function endBattleLocal() {
-  if (battle) clearInterval(battle.sendTimer);
+  if (battle) stopRound(battle);
   battle = null;
   history.replaceState(null, "", location.pathname);
   $("room-entry").hidden = false;
   $("room-lobby").hidden = true;
+  $("btn-stamp").hidden = true;
+  $("turn").hidden = true;
+  $<HTMLDialogElement>("dlg-watch").close();
 }
 
 $("room-leave").onclick = () => {
@@ -786,17 +817,34 @@ $("room-leave").onclick = () => {
   setMsg("room-msg", "部屋を出ました");
 };
 $("room-start").onclick = () => battle?.client.send({ t: "start" });
+const cycle = <T,>(list: readonly T[], cur: T) => list[(list.indexOf(cur) + 1) % list.length];
+const hostLobby = () => !!battle?.room && battle.isHost() && battle.room.phase !== "playing";
 $("room-mode").onclick = () => {
-  const r = battle?.room;
-  if (!r || !battle!.isHost() || r.phase !== "lobby") return;
-  const next = MODES[(MODES.indexOf(r.mode) + 1) % MODES.length];
-  battle!.client.send({ t: "mode", mode: next });
+  if (!hostLobby()) return;
+  battle!.client.send({ t: "mode", mode: cycle(MODES, battle!.room!.mode) });
   sfx("tick");
 };
+$("room-play").onclick = () => {
+  if (!hostLobby()) return;
+  battle!.client.send({ t: "play", play: cycle(PLAYS, battle!.room!.play) });
+  sfx("tick");
+};
+$("room-jama").onclick = () => {
+  if (!hostLobby()) return;
+  battle!.client.send({ t: "jama", on: !battle!.room!.jama });
+  sfx("tick");
+};
+$("room-spec").onclick = () => {
+  if (!battle?.room || battle.isHost()) return;
+  battle.client.send({ t: "spec", on: !meIn(battle.room)?.spec });
+};
+$("room-team-pick").querySelectorAll<HTMLButtonElement>("button").forEach((btn) =>
+  btn.addEventListener("click", () => battle?.client.send({ t: "team", team: btn.dataset.team as "A" | "B" })),
+);
 $("room-invite").onclick = async () => {
   if (!battle?.room) return;
   const url = inviteUrl(battle.room.code);
-  const text = `合体！漢字タワーで対戦しよう。部屋番号 ${battle.room.code}`;
+  const text = `合体！漢字タワーで遊ぼう。部屋番号 ${battle.room.code}`;
   try {
     if (navigator.share) await navigator.share({ title: "合体！漢字タワー", text, url });
     else {
@@ -814,6 +862,7 @@ const inviteUrl = (code: string) => `${GAME_URL.split("?")[0]}?room=${code}`;
 function openRoomLobby() {
   if (!battle?.room) return openRoomDialog();
   const r = battle.room;
+  const mine = meIn(r);
   $("room-entry").hidden = true;
   $("room-lobby").hidden = false;
   $("room-tiles").innerHTML = [...r.code].map((d) => `<span class="tile">${d}</span>`).join("");
@@ -828,40 +877,58 @@ function openRoomLobby() {
       $("room-qr").innerHTML = "";
     }
   }
-  const host0 = battle.isHost();
-  const modeBtn = $<HTMLButtonElement>("room-mode");
-  const canEdit = host0 && r.phase === "lobby";
-  modeBtn.textContent = `難易度：${MODE[r.mode].name}${canEdit ? "（タップで切りかえ）" : ""}`;
-  modeBtn.disabled = !canEdit;
+  const host = battle.isHost();
+  const canEdit = host && r.phase !== "playing";
+  const edit = canEdit ? "（タップで切りかえ）" : "";
+  const setBtn = (id: string, text: string, show = true) => {
+    const el = $<HTMLButtonElement>(id);
+    el.hidden = !show;
+    el.textContent = text + edit;
+    el.disabled = !canEdit;
+  };
+  setBtn("room-play", `あそびかた：${PLAY_LABEL[r.play]}`);
+  setBtn("room-mode", `難易度：${MODE[r.mode].name}`);
+  setBtn("room-jama", `おじゃま：${r.jama ? "あり（合体すると相手に重い字が飛ぶ）" : "なし"}`, r.play !== "coop");
+  const pick = $("room-team-pick");
+  pick.hidden = r.play !== "team" || !!mine?.spec || r.phase === "playing";
+  pick.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(mine?.team === (x as HTMLElement).dataset.team)));
   const active = r.players.filter((p) => p.status !== "left");
-  $("room-count").textContent = `参加者 ${active.length}人（${MAX_PLAYERS}人まで）`;
-  const statusTag: Record<string, string> = { playing: "対戦中", done: "終了", left: "通信切れ", lobby: "" };
+  const playing = active.filter((p) => !p.spec);
+  $("room-count").textContent = `参加者 ${playing.length}人${active.length > playing.length ? `・観戦 ${active.length - playing.length}人` : ""}（${MAX_PLAYERS}人まで）`;
+  const statusTag: Record<string, string> = { playing: "プレイ中", done: "終了", left: "通信切れ", lobby: "" };
   $("room-players").innerHTML = r.players
     .map((p) => {
-      const tags = [p.host ? "部屋主" : "", r.phase === "playing" ? statusTag[p.status] : p.status === "left" ? "通信切れ" : ""]
+      const tags = [
+        p.host ? "部屋主" : "",
+        p.spec ? "観戦" : r.play === "team" && p.team ? TEAM_LABEL[p.team] : "",
+        r.phase === "playing" ? statusTag[p.status] : p.status === "left" ? "通信切れ" : "",
+      ]
         .filter(Boolean)
         .join("・");
       return `<li class="${p.status === "left" ? "off" : ""}"><span class="dot"></span><span class="nm">${esc(p.name)}${
         p.id === battle!.me ? "（あなた）" : ""
-      }</span>${tags ? `<span class="tag">${esc(tags)}</span>` : ""}</li>`;
+      }</span>${tags ? `<span class="tag ${p.team ? `team-dot-${p.team}` : ""}">${esc(tags)}</span>` : ""}</li>`;
     })
     .join("");
-  const host = battle.isHost();
-  $<HTMLButtonElement>("room-start").hidden = !host || r.phase !== "lobby";
-  $<HTMLButtonElement>("room-start").disabled = r.phase !== "lobby";
+  $<HTMLButtonElement>("room-start").hidden = !host || r.phase === "playing";
+  $("room-start").textContent = r.play === "vs" ? "対戦を始める" : r.play === "coop" ? "協力を始める" : "チーム戦を始める";
+  const spec = $<HTMLButtonElement>("room-spec");
+  spec.hidden = host;
+  spec.textContent = mine?.spec ? "参加する（次の回から）" : "観戦する";
   setMsg(
     "room-wait",
     r.phase === "playing"
-      ? "いま対戦中です。次の回から参加できます"
+      ? "いまプレイ中です。次の回から参加できます（観戦もできます）"
       : host
-        ? active.length < 2
+        ? playing.length < 2
           ? "相手が入ってくるのを待とう（ひとりでも始められます）"
-          : `${active.length}人そろったら始めよう`
+          : `${playing.length}人そろったら始めよう`
         : "部屋主が始めるのを待っています…",
   );
   setMsg("room-msg", "");
   const dlg = $<HTMLDialogElement>("dlg-room");
-  if (!dlg.open && !$<HTMLDialogElement>("dlg-result").open && !(game && !game.over)) dlg.showModal();
+  if (!dlg.open && !$<HTMLDialogElement>("dlg-result").open && !$<HTMLDialogElement>("dlg-watch").open && !(game && !game.over))
+    dlg.showModal();
 }
 
 function onServer(m: ServerMsg) {
@@ -872,75 +939,190 @@ function onServer(m: ServerMsg) {
       b.me = m.id;
       break;
     case "error":
-      setMsg("room-msg", m.error, true);
-      if (!b.room) {
+      if (m.fatal || !b.room) {
         b.client.close();
         endBattleLocal();
+        closeAll();
+        show("title");
+        openRoomDialog();
       }
+      setMsg("room-msg", m.error, true);
       break;
     case "room": {
       const prev = b.room?.phase;
       b.room = m.room;
       b.offset = m.now - Date.now();
-      if (m.room.phase === "lobby") openRoomLobby();
+      const mine = meIn(m.room);
+      if (m.room.phase === "lobby") {
+        if (b.watching) stopWatch();
+        openRoomLobby();
+      }
       if (m.room.phase === "playing" && b.startedFor !== m.room.startsAt) {
-        const me = m.room.players.find((p) => p.id === b.me);
-        if (me?.status === "playing") startBattleGame(m.room);
+        if (mine?.spec) startWatch(m.room);
+        else if (mine?.status === "playing") startBattleGame(m.room);
         else openRoomLobby();
       }
-      if (m.room.phase === "playing") updateRivalMeta();
-      if (m.room.phase === "result" && prev !== "result") showBattleResult();
+      if (m.room.phase === "playing") {
+        updateRivalMeta();
+        keepTurn();
+        if (b.watching) renderWatchHeader();
+      }
+      if (m.room.phase === "result" && prev !== "result") {
+        if (b.watching) showWatchResult();
+        else showBattleResult();
+      }
+      if ($<HTMLDialogElement>("dlg-room").open && m.room.phase !== "playing") openRoomLobby();
       break;
     }
     case "towers": {
+      if (b.room?.play !== "vs") break;
       for (const t of m.list) {
         const r = b.rivals.get(t.id);
         if (!r) continue;
         r.score = t.score;
-        r.tower = t.tower.map(([i, x, y, a]) => ({ ch: ALL[i]?.ch ?? "口", x, y, a }));
+        r.tower = t.tower.map(([i, x, y, a]) => ({ ch: NET_CHARS[i] ?? "口", x, y, a }));
         drawRival(t.id);
       }
       sortRivals();
       break;
     }
+    case "event":
+      onEvent(m.ev);
+      break;
   }
 }
 
+// ---------- おじゃま・スタンプ ----------
+
+function onEvent(ev: RoomEvent) {
+  const b = battle;
+  if (!b?.room || ev.round !== b.room.round || ev.from === b.me) return;
+  if (ev.type === "stamp" && ev.stamp) {
+    const card = document.querySelector<HTMLElement>(`.rival[data-id="${CSS.escape(ev.from)}"], .watch-cell[data-id="${CSS.escape(ev.from)}"]`);
+    if (card) {
+      card.querySelectorAll(".bubble").forEach((x) => x.remove());
+      const el = document.createElement("div");
+      el.className = "bubble";
+      el.textContent = ev.stamp;
+      card.append(el);
+      setTimeout(() => el.remove(), 2300);
+    } else toast(`${ev.name}：${ev.stamp}`);
+    return;
+  }
+  if (ev.type === "jama" && ev.ch && isJama(ev.ch)) {
+    const forMe = ev.to === b.me || (!!ev.toTeam && ev.toTeam === b.myTeam);
+    if (forMe && game && !game.over) {
+      if (game.control !== "mirror") game.pushJama(ev.ch);
+      toast(`${ev.name}さんから「${ev.ch}」が飛んできた！`);
+    }
+    const card = document.querySelector(`.rival[data-id="${CSS.escape(ev.from)}"]`);
+    card?.classList.add("hit");
+    setTimeout(() => card?.classList.remove("hit"), 1200);
+  }
+}
+
+/** 合体したら、いちばん上の人（自分がトップなら2番目）におじゃま字を送る */
+function sendJamaFor(ch: string) {
+  const b = battle;
+  const r = b?.room;
+  if (!b || !r || !r.jama || r.play === "coop" || !game || kanji(ch).strokes < 6) return;
+  const jamaCh = JAMA[Math.floor(Math.random() * JAMA.length)].ch;
+  if (r.play === "team") {
+    if (!b.boxHost || !b.myTeam) return;
+    b.client.sendEvent({ type: "jama", toTeam: b.myTeam === "A" ? "B" : "A", ch: jamaCh, round: r.round });
+    return;
+  }
+  const playing = new Set(r.players.filter((p) => p.status === "playing" && p.id !== b.me).map((p) => p.id));
+  const list = [...b.rivals.entries()].filter(([id]) => playing.has(id)).sort((x, y) => compareScore("strokes", x[1].score, y[1].score));
+  const target = list[0]?.[0];
+  if (target) b.client.sendEvent({ type: "jama", to: target, ch: jamaCh, round: r.round });
+}
+
+function sendStamp(stamp: string) {
+  const b = battle;
+  if (!b?.room) return;
+  b.client.sendEvent({ type: "stamp", stamp, round: b.room.round });
+  const el = $("my-stamp");
+  el.textContent = stamp;
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 1200);
+  $("stamp-bar").hidden = true;
+  $("watch-stamps").hidden = true;
+  if (b.watching) toast(`スタンプ ${stamp}`);
+}
+$("btn-stamp").onclick = () => ($("stamp-bar").hidden = !$("stamp-bar").hidden);
+$("watch-stamp").onclick = () => ($("watch-stamps").hidden = !$("watch-stamps").hidden);
+let lastStampAt = 0;
+document.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-stamp]");
+  if (!btn) return;
+  if (Date.now() - lastStampAt < 1200) return; // 連打しすぎない
+  lastStampAt = Date.now();
+  sendStamp(btn.dataset.stamp!);
+});
+
+// ---------- プレイ開始 ----------
+
 function startBattleGame(room: RoomState) {
   const b = battle!;
+  stopRound(b);
   b.startedFor = room.startsAt;
+  b.watching = false;
   closeAll();
   show("play");
   $("btn-pause").hidden = true;
   $("timer").hidden = false;
+  $("btn-stamp").hidden = false;
+  $("stamp-bar").hidden = true;
   game?.destroy();
   game = null;
-  // 相手の塔
+  lastResult = null;
+  const mine = meIn(room)!;
+  b.myTeam = room.play === "coop" ? "C" : room.play === "team" ? (mine.team ?? null) : null;
+  const team = room.teams.find((t) => t.id === b.myTeam);
+  b.boxHost = !!team && team.host === b.me;
+  b.turn = team?.members[0] ?? "";
+
+  // 上の段：対戦は相手の塔、協力は仲間の名前、チーム戦は相手チームの塔
   const rivalsEl = $("rivals");
   rivalsEl.hidden = false;
-  rivalsEl.innerHTML = `<div class="myrank" id="myrank">-<small>/${room.players.filter((p) => p.status === "playing").length}人</small></div>`;
   b.rivals.clear();
-  for (const p of room.players) {
-    if (p.id === b.me) continue;
-    const div = document.createElement("div");
-    div.className = "rival";
-    div.dataset.id = p.id;
-    div.innerHTML = `<div class="nm"><span>${esc(p.name)}</span><span class="sc">0画</span></div><canvas width="240" height="140"></canvas>`;
-    rivalsEl.append(div);
-    b.rivals.set(p.id, { canvas: div.querySelector("canvas")!, score: { strokes: 0, height: 0, count: 0 }, tower: [] });
-    drawRival(p.id);
+  if (room.play === "vs") {
+    rivalsEl.innerHTML = `<div class="myrank" id="myrank">-<small>/${room.players.filter((p) => p.status === "playing").length}人</small></div>`;
+    for (const p of room.players) if (p.id !== b.me && p.status === "playing") addRivalCard(rivalsEl, p.id, p.name);
+  } else if (room.play === "coop") {
+    rivalsEl.innerHTML = "";
+    renderCoopChips();
+  } else {
+    rivalsEl.innerHTML = "";
+    const other = room.teams.find((t) => t.id !== b.myTeam);
+    if (other) {
+      addRivalCard(rivalsEl, other.id, TEAM_LABEL[other.id]);
+      b.stops.push(
+        b.client.watchBox(other.id, (st) => {
+          if (st.r !== room.round) return;
+          const rv = b.rivals.get(other.id)!;
+          rv.score = st.best;
+          rv.tower = st.p.map(([i, x, y, a]) => ({ ch: NET_CHARS[i] ?? "口", x, y, a }));
+          drawRival(other.id);
+        }),
+      );
+    }
   }
+
   // カウントダウン
   const banner = $("banner");
   banner.hidden = false;
   const startLocal = room.startsAt - b.offset;
   const endLocal = room.endsAt - b.offset;
+  const what =
+    room.play === "vs" ? "同じ字が同じ順で出ます" : room.play === "coop" ? "みんなで1つの塔を順番に積もう" : `あなたは${TEAM_LABEL[b.myTeam ?? "A"]}`;
   const tick = () => {
     if (battle !== b) return;
     const left = Math.ceil((startLocal - Date.now()) / 1000);
     if (left > 0) {
       banner.classList.remove("toast");
-      banner.innerHTML = `${left}<small>${MODE[room.mode].name}・同じ字が同じ順で出ます</small>`;
+      banner.innerHTML = `${left}<small>${MODE[room.mode].name}・${esc(what)}</small>`;
       setTimeout(tick, 200);
       return;
     }
@@ -949,21 +1131,133 @@ function startBattleGame(room: RoomState) {
     sfx("win");
     setTimeout(() => (banner.hidden = true), 700);
     void glyphsReady().then(() => {
-      if (battle === b) newGame(room.seed, room.mode, endLocal);
+      if (battle !== b) return;
+      if (room.play === "vs") newGame(room.seed, room.mode, { endsAt: endLocal });
+      else startBoxGame(b, room, endLocal);
     });
-    clearInterval(b.sendTimer);
     let n = 0;
+    let lastDrops = 0;
     b.sendTimer = window.setInterval(() => {
       if (!game || battle !== b) return;
-      // 塔は0.5秒ごと（サーバーがまとめて全員に配る）
-      if (n++ % 2 === 0) b.client.sendTower(game.best, game.pieces(), INDEX);
+      n++;
+      if (room.play === "vs") {
+        if (n % 2 === 0) b.client.sendTower(game.best, game.pieces(), INDEX);
+      } else if (b.boxHost && b.myTeam) {
+        // 代表：番を進め、盤面を配る
+        if (game.drops !== lastDrops) {
+          lastDrops = game.drops;
+          advanceTurn();
+        }
+        b.client.pushBox(b.myTeam, { ...game.exportState(), r: room.round, turn: b.turn, tn: playerName(b.turn) });
+        if (n % 8 === 0) b.client.setTeam(b.myTeam, game.best, false);
+      }
       const secs = Math.max(0, Math.ceil((endLocal - Date.now()) / 1000));
       $("timer").textContent = String(secs);
       $("timer").classList.toggle("hurry", secs <= 10);
-      sortRivals();
-    }, 250);
+      if (room.play === "vs") sortRivals();
+      renderTurn();
+    }, 150);
   };
   tick();
+}
+
+/** 協力・チーム戦の塔：代表は物理を計算し、ほかの人は配られた盤面を映す */
+function startBoxGame(b: Battle, room: RoomState, endLocal: number) {
+  const team = b.myTeam!;
+  if (b.boxHost) {
+    const g = newGame(room.seed, room.mode, { endsAt: endLocal, control: "host", canControl: () => b.turn === b.me });
+    b.stops.push(
+      b.client.watchCmds(team, (cmd) => {
+        if (cmd.r !== room.round || cmd.from !== b.turn || game !== g) return;
+        g.applyCommand(cmd);
+      }),
+    );
+  } else {
+    const g = newGame(room.seed, room.mode, {
+      endsAt: endLocal,
+      control: "mirror",
+      canControl: () => b.turn === b.me,
+      onCommand: (cmd) => b.client.sendCmd(team, cmd),
+    });
+    b.stops.push(
+      b.client.watchBox(team, (st) => {
+        if (st.r !== room.round || game !== g) return;
+        const was = b.turn;
+        b.turn = st.turn;
+        if (was !== b.turn && b.turn === b.me) {
+          sfx("tick");
+          buzz(40);
+        }
+        g.setMirror(st, st.turn === b.me);
+        renderTurn();
+        renderCoopChips();
+      }),
+    );
+  }
+  renderTurn();
+}
+
+/** 番の順：チームの仲間を入った順に。通信が切れた人はとばす */
+function turnOrder(): string[] {
+  const b = battle;
+  const team = b?.room?.teams.find((t) => t.id === b.myTeam);
+  if (!b || !team) return [];
+  const on = new Set(b.room!.players.filter((p) => p.status !== "left").map((p) => p.id));
+  return team.members.filter((id) => on.has(id));
+}
+
+function advanceTurn() {
+  const b = battle;
+  if (!b) return;
+  const order = turnOrder();
+  if (!order.length) return;
+  b.turn = order[(order.indexOf(b.turn) + 1) % order.length];
+  if (b.turn === b.me) {
+    sfx("tick");
+    buzz(40);
+  }
+  renderTurn();
+  renderCoopChips();
+}
+
+/** 番の人が抜けたら次へ（代表だけが決める） */
+function keepTurn() {
+  const b = battle;
+  if (!b?.boxHost || !b.myTeam) return;
+  const order = turnOrder();
+  if (order.length && !order.includes(b.turn)) advanceTurn();
+}
+
+function renderTurn() {
+  const b = battle;
+  const el = $("turn");
+  if (!b?.myTeam || !game || game.over) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  const mine = b.turn === b.me;
+  el.classList.toggle("mine", mine);
+  el.textContent = mine ? "あなたの番！ 字を選んで落とそう" : `${playerName(b.turn)}さんの番`;
+}
+
+function renderCoopChips() {
+  const b = battle;
+  if (!b?.room || b.room.play !== "coop") return;
+  const order = b.room.teams[0]?.members ?? [];
+  $("rivals").innerHTML = order
+    .map((id) => `<span class="chip${id === b.turn ? " turn-now" : ""}" data-id="${esc(id)}">${esc(playerName(id))}${id === b.me ? "（あなた）" : ""}</span>`)
+    .join("");
+}
+
+function addRivalCard(parent: HTMLElement, id: string, name: string) {
+  const div = document.createElement("div");
+  div.className = "rival";
+  div.dataset.id = id;
+  div.innerHTML = `<div class="nm"><span>${esc(name)}</span><span class="sc">0画</span></div><canvas width="240" height="140"></canvas>`;
+  parent.append(div);
+  battle!.rivals.set(id, { canvas: div.querySelector("canvas")!, score: { strokes: 0, height: 0, count: 0 }, tower: [] });
+  drawRival(id);
 }
 
 function drawRival(id: string) {
@@ -974,7 +1268,7 @@ function drawRival(id: string) {
   ctx.clearRect(0, 0, r.canvas.width, r.canvas.height);
   const def = MODE[battle?.room?.mode ?? "normal"];
   drawTowerFit(ctx, r.tower, { x: 0, y: 0, w: r.canvas.width, h: r.canvas.height }, 4, { half: def.platformHalf, mono: def.mono });
-  const el = document.querySelector<HTMLElement>(`.rival[data-id="${id}"] .sc`);
+  const el = r.canvas.parentElement?.querySelector<HTMLElement>(".sc");
   if (el) el.textContent = `${r.score.strokes}画`;
 }
 
@@ -986,7 +1280,7 @@ function sortRivals() {
   const list = [...b.rivals.entries()].sort((x, y) => compareScore("strokes", x[1].score, y[1].score));
   const strip = $("rivals");
   for (const [id] of list) {
-    const el = strip.querySelector(`.rival[data-id="${id}"]`);
+    const el = strip.querySelector(`.rival[data-id="${CSS.escape(id)}"]`);
     if (el) strip.append(el);
   }
   const ahead = list.filter(([, r]) => compareScore("strokes", r.score, mine) < 0).length;
@@ -996,48 +1290,169 @@ function sortRivals() {
 
 function updateRivalMeta() {
   for (const p of battle?.room?.players ?? []) {
-    const el = document.querySelector(`.rival[data-id="${p.id}"]`);
+    const el = document.querySelector(`.rival[data-id="${CSS.escape(p.id)}"]`);
     el?.classList.toggle("done", p.status !== "playing");
   }
 }
 
 function battleOver(g: Game) {
   const b = battle;
-  if (!b) return;
-  clearInterval(b.sendTimer);
-  b.client.sendTower(g.best, g.pieces(), INDEX);
-  b.client.send({ t: "done", score: g.best });
+  if (!b?.room) return;
   lastResult = resultFrom(g);
+  if (b.room.play === "vs") {
+    clearInterval(b.sendTimer);
+    b.client.sendTower(g.best, g.pieces(), INDEX);
+    b.client.send({ t: "done", score: g.best });
+  } else if (b.boxHost && b.myTeam) {
+    b.client.pushBox(b.myTeam, { ...g.exportState(), r: b.room.round, turn: b.turn, tn: playerName(b.turn) });
+    b.client.setTeam(b.myTeam, g.best, true);
+  }
+  $("turn").hidden = true;
   const banner = $("banner");
   banner.hidden = false;
   banner.classList.remove("toast");
-  banner.innerHTML = `${g.overReason === "time" ? "終了！" : "落ちた！"}<small>ほかの人を待っています…</small>`;
+  banner.innerHTML = `${g.overReason === "time" ? "終了！" : "落ちた！"}<small>${b.room.play === "vs" ? "ほかの人" : "ほかのチーム"}を待っています…</small>`;
+}
+
+function resultTable(r: RoomState, me: string): { html: string; rank: number; title: string } {
+  if (r.play === "vs") {
+    const order = r.players.filter((p) => !p.spec && (p.status !== "left" || p.score.count > 0));
+    const rank = order.findIndex((p) => p.id === me) + 1;
+    const html = order
+      .map(
+        (p, i) =>
+          `<tr class="${p.id === me ? "me" : ""}"><td>${i + 1}位</td><td>${esc(p.name)}${p.status === "left" ? "（退出）" : ""}</td><td class="n">${
+            p.score.strokes
+          }画</td><td class="n">${fmtH(p.score.height)}m</td></tr>`,
+      )
+      .join("");
+    return { html, rank, title: rank === 1 ? "勝ち！" : rank ? `${rank}位` : "結果" };
+  }
+  if (r.play === "coop") {
+    const t = r.teams[0];
+    const names = (t?.members ?? []).map((id) => esc(playerName(id))).join("・");
+    const html = `<tr class="me"><td>みんな</td><td>${names}</td><td class="n">${t?.score.strokes ?? 0}画</td><td class="n">${fmtH(t?.score.height ?? 0)}m</td></tr>`;
+    return { html, rank: 1, title: `みんなで ${t?.score.strokes ?? 0}画！` };
+  }
+  const myTeam = r.players.find((p) => p.id === me)?.team;
+  const rank = r.teams.findIndex((t) => t.id === myTeam) + 1;
+  const html = r.teams
+    .map(
+      (t, i) =>
+        `<tr class="${t.id === myTeam ? "me" : ""}"><td>${i + 1}位</td><td><b class="team-dot-${t.id}">${TEAM_LABEL[t.id]}</b><br><small>${t.members
+          .map((id) => esc(playerName(id)))
+          .join("・")}</small></td><td class="n">${t.score.strokes}画</td><td class="n">${fmtH(t.score.height)}m</td></tr>`,
+    )
+    .join("");
+  const tie = r.teams.length === 2 && compareScore("strokes", r.teams[0].score, r.teams[1].score) === 0;
+  return { html, rank, title: tie ? "引き分け" : rank === 1 ? "チームの勝ち！" : rank ? "チームの負け…" : "結果" };
 }
 
 function showBattleResult() {
   const b = battle!;
   const r = b.room!;
-  clearInterval(b.sendTimer);
+  stopRound(b);
   if (game && !game.over) game.end("time");
-  const order = [...r.players].filter((p) => p.status !== "left" || p.score.count > 0);
-  const me = order.findIndex((p) => p.id === b.me);
-  battleRank = me + 1;
+  const { html, rank, title } = resultTable(r, b.me);
+  battleRank = rank;
   if (!lastResult)
     lastResult = { mode: r.mode, score: { strokes: 0, height: 0, count: 0 }, tower: [], made: [], words: [], playMs: 0, drops: 0, replay: [] };
   $("banner").hidden = true;
+  $("turn").hidden = true;
+  $("btn-stamp").hidden = true;
+  $("stamp-bar").hidden = true;
   openResult();
-  $("r-title").textContent = battleRank === 1 ? "勝ち！" : `${battleRank}位`;
-  if (battleRank === 1) sfx("win");
-  $("r-battle").innerHTML = `<div class="battle-wrap"><table class="battle-table">${order
-    .map(
-      (p, i) =>
-        `<tr class="${p.id === b.me ? "me" : ""}"><td>${i + 1}位</td><td>${esc(p.name)}${
-          p.status === "left" ? "（退出）" : ""
-        }</td><td class="n">${p.score.strokes}画</td><td class="n">${fmtH(p.score.height)}m</td></tr>`,
-    )
-    .join("")}</table></div>`;
+  $("r-title").textContent = title;
+  if (rank === 1 && r.play !== "coop") sfx("win");
+  $("r-battle").innerHTML = `<div class="battle-wrap"><table class="battle-table">${html}</table></div>`;
   document.querySelector(".battle-wrap tr.me")?.scrollIntoView({ block: "nearest" });
 }
+
+// ---------- 観戦 ----------
+
+function startWatch(room: RoomState) {
+  const b = battle!;
+  stopRound(b);
+  b.startedFor = room.startsAt;
+  b.watching = true;
+  b.myTeam = null;
+  b.rivals.clear();
+  closeAll();
+  show("title");
+  const grid = $("watch-grid");
+  grid.innerHTML = "";
+  const add = (id: string, name: string) => {
+    const div = document.createElement("div");
+    div.className = "watch-cell";
+    div.dataset.id = id;
+    div.innerHTML = `<canvas width="300" height="400"></canvas><div class="wn"><span>${esc(name)}</span><span class="sc">0画</span></div>`;
+    grid.append(div);
+    b.rivals.set(id, { canvas: div.querySelector("canvas")!, score: { strokes: 0, height: 0, count: 0 }, tower: [] });
+    drawRival(id);
+  };
+  if (room.play === "vs") {
+    for (const p of room.players) if (p.status === "playing") add(p.id, p.name);
+  } else {
+    for (const t of room.teams) {
+      add(t.id, room.play === "coop" ? "みんなの塔" : TEAM_LABEL[t.id]);
+      b.stops.push(
+        b.client.watchBox(t.id, (st) => {
+          if (st.r !== room.round) return;
+          const rv = b.rivals.get(t.id)!;
+          rv.score = st.best;
+          rv.tower = st.p.map(([i, x, y, a]) => ({ ch: NET_CHARS[i] ?? "口", x, y, a }));
+          drawRival(t.id);
+          const cell = grid.querySelector(`.watch-cell[data-id="${t.id}"] .wn span`);
+          if (cell) cell.textContent = `${room.play === "coop" ? "みんなの塔" : TEAM_LABEL[t.id]}（${st.tn}さんの番）`;
+        }),
+      );
+    }
+  }
+  $("watch-title").textContent = "観戦中";
+  $("watch-lobby").hidden = true;
+  renderWatchHeader();
+  const dlg = $<HTMLDialogElement>("dlg-watch");
+  if (!dlg.open) dlg.showModal();
+  const endLocal = room.endsAt - b.offset;
+  b.sendTimer = window.setInterval(() => {
+    if (battle !== b) return;
+    const secs = Math.max(0, Math.ceil((endLocal - Date.now()) / 1000));
+    setMsg("watch-sub", `${PLAY_LABEL[room.play]}・${MODE[room.mode].name}・のこり${secs}秒`);
+  }, 500);
+}
+
+function renderWatchHeader() {
+  const r = battle?.room;
+  if (!r) return;
+  setMsg("watch-sub", `${PLAY_LABEL[r.play]}・${MODE[r.mode].name}`);
+}
+
+function stopWatch() {
+  const b = battle;
+  if (!b) return;
+  stopRound(b);
+  b.watching = false;
+  $<HTMLDialogElement>("dlg-watch").close();
+}
+
+function showWatchResult() {
+  const b = battle!;
+  const r = b.room!;
+  clearInterval(b.sendTimer);
+  const { html } = resultTable(r, "");
+  $("watch-title").textContent = "結果";
+  setMsg("watch-sub", "部屋主が次を始めるまで待っています");
+  $("watch-grid").insertAdjacentHTML("afterbegin", `<div class="battle-wrap" style="grid-column:1/-1"><table class="battle-table">${html}</table></div>`);
+  $("watch-lobby").hidden = false;
+}
+$("watch-lobby").onclick = () => {
+  stopWatch();
+  openRoomLobby();
+};
+$("watch-leave").onclick = () => {
+  leaveRoom();
+  show("title");
+};
 
 // 字形のフォントを先に読み込んでおく
 void glyphsReady();

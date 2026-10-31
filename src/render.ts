@@ -1,5 +1,5 @@
 import { GLYPH_PX, setGlyphFont } from "./glyph";
-import { kanji, sizeOf } from "./shared/kanji";
+import { isJama, kanji, sizeOf } from "./shared/kanji";
 
 /** 塔の1字ぶん（通信・保存・画像にも使う） */
 export interface Piece {
@@ -16,6 +16,7 @@ export const PLATFORM_H = 0.5;
 const PALETTE = ["#e5735f", "#4f8fd0", "#4fae6c", "#d9a032", "#8f6fcf", "#2fa39a", "#d9679d"];
 
 export function colorOf(ch: string): string {
+  if (isJama(ch)) return "#4a3f6b"; // おじゃま字は暗い紫
   const k = kanji(ch);
   if (k.strokes >= 10) return "#f0b429";
   return PALETTE[ch.codePointAt(0)! % PALETTE.length];
@@ -56,7 +57,7 @@ export function drawPiece(ctx: CanvasRenderingContext2D, p: Piece, style: PieceS
   ctx.lineWidth = 7;
   ctx.strokeStyle = "#1d2321";
   ctx.strokeText(p.ch, 0, 0);
-  ctx.fillStyle = style.mono ? MONO : colorOf(p.ch);
+  ctx.fillStyle = style.mono && !isJama(p.ch) ? MONO : colorOf(p.ch);
   ctx.fillText(p.ch, 0, 0);
   if (style.flash) {
     ctx.fillStyle = `rgba(255,255,255,${style.flash})`;
