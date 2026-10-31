@@ -1,7 +1,7 @@
 // 漢字の字形から当たり判定を作る。
 // 字を 120px 四方のキャンバスに描き、12×12 のマスのうち墨がのっているマスを
 // 横・縦につないだ長方形の集まりにする。枠ではなく字の形そのものが積み木になる。
-import { ALL, sizeOf } from "./shared/kanji";
+import { ALL, JAMA, sizeOf } from "./shared/kanji";
 
 export const GLYPH_FONT = '"Noto Serif JP", "Noto Serif CJK JP", "Hiragino Mincho ProN", "Yu Mincho", serif';
 export const GLYPH_PX = 100; // 描くときの基準の大きさ（1字 = 100px）
@@ -19,7 +19,7 @@ let ready: Promise<void> | null = null;
 /** 字形のフォントを読み込む（最大 3 秒待つ）。読み込めなければ端末の明朝体で続ける */
 export function glyphsReady(): Promise<void> {
   ready ??= (async () => {
-    const text = ALL.map((k) => k.ch).join("");
+    const text = [...ALL, ...JAMA].map((k) => k.ch).join("");
     try {
       await Promise.race([
         document.fonts.load(`900 ${GLYPH_PX}px "Noto Serif JP"`, text),

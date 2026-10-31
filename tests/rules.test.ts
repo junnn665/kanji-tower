@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALL, BASE, MERGED, mergeOf, kanji } from "../src/shared/kanji";
+import { ALL, BASE, JAMA, MERGED, WORDS, isJama, mergeOf, kanji, sizeOf } from "../src/shared/kanji";
 import { compareScore, normalizeName, pickCandidates, plausible, rng } from "../src/shared/rules";
 
 describe("合体表", () => {
@@ -29,6 +29,25 @@ describe("合体表", () => {
         }
     }
     expect(made.size).toBe(ALL.length);
+  });
+});
+
+describe("熟語とおじゃま字", () => {
+  it("熟語は2字で、どの字もゲームに出てくる", () => {
+    const chars = new Set(ALL.map((k) => k.ch));
+    for (const [w, r] of WORDS) {
+      expect([...w]).toHaveLength(2);
+      [...w].forEach((c) => expect(chars.has(c), `${w} の ${c}`).toBe(true));
+      expect(r.length).toBeGreaterThan(0);
+    }
+    expect(new Set(WORDS.map(([w]) => w)).size).toBe(WORDS.length);
+  });
+  it("おじゃま字は合体せず、大きさに上限がある", () => {
+    for (const j of JAMA) {
+      expect(isJama(j.ch)).toBe(true);
+      expect(sizeOf(j.ch)).toBeLessThanOrEqual(1.75);
+      for (const k of ALL) expect(mergeOf(j.ch, k.ch)).toBeUndefined();
+    }
   });
 });
 

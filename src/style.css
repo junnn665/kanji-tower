@@ -254,6 +254,14 @@ dialog > .row, dialog .row { margin-top: 10px; }
 .r-scores .new { color: var(--shu); font-size: 11px; font-weight: 900; }
 .made { font: 700 20px/1.5 var(--kanji); text-align: center; margin: 4px 0; letter-spacing: .1em; }
 .made:empty { display: none; }
+.made.words { color: #a06f00; font-size: 17px; }
+#r-replay { width: 100%; height: auto; max-height: 46dvh; object-fit: contain; border: 1px solid var(--grid); border-radius: 8px; background: var(--paper); }
+.toggles { display: flex; gap: 14px; }
+.dex-words { list-style: none; margin: 0; padding: 10px 0 16px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.dex-words li { border: 1.5px solid var(--grid); border-radius: 6px; padding: 6px 4px; text-align: center; }
+.dex-words b { display: block; font: 900 24px/1.2 var(--kanji); }
+.dex-words small { font-size: 11px; color: var(--ink-soft); font-weight: 700; }
+.dex-words li.locked b { color: var(--grid); }
 .submit { display: flex; gap: 8px; margin-top: 8px; }
 .submit input, .join input, .field input {
   flex: 1; min-width: 0; width: 100%;

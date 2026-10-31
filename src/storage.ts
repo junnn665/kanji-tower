@@ -13,7 +13,12 @@ interface Data {
   /** 難易度ごとの自己ベスト */
   best: Partial<Record<Mode, Bests>>;
   mode: Mode;
+  /** 見つけた熟語 */
+  words: string[];
+  /** 今日のお題：日付ごとの本番の記録 */
+  daily: Record<string, Score & { words: number }>;
   sound: boolean;
+  vibrate: boolean;
   name: string;
   device: string;
 }
@@ -21,7 +26,17 @@ interface Data {
 const KEY = "kanji-tower-v1";
 
 function load(): Data {
-  const base: Data = { discovered: [], best: {}, mode: "normal", sound: true, name: "", device: "" };
+  const base: Data = {
+    discovered: [],
+    best: {},
+    mode: "normal",
+    words: [],
+    daily: {},
+    sound: true,
+    vibrate: true,
+    name: "",
+    device: "",
+  };
   try {
     Object.assign(base, JSON.parse(localStorage.getItem(KEY) || "{}"));
   } catch {
@@ -48,6 +63,11 @@ export const store = {
     } catch {
       /* noop */
     }
+  },
+  discoverWord(w: string): boolean {
+    if (data.words.includes(w)) return false;
+    store.set({ words: [...data.words, w] });
+    return true;
   },
   discover(ch: string): boolean {
     if (data.discovered.includes(ch)) return false;

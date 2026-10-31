@@ -43,7 +43,10 @@
             <button id="btn-rank" class="btn">ランキング</button>
           </div>
         </div>
-        <button id="btn-sound" class="sound" aria-label="音のオン・オフ">音：オン</button>
+        <div class="toggles">
+          <button id="btn-sound" class="sound" aria-label="音のオン・オフ">音：オン</button>
+          <button id="btn-vibe" class="sound" aria-label="振動のオン・オフ">振動：オン</button>
+        </div>
         <footer class="credit">© 中濱Games</footer>
       </section>
 
@@ -74,8 +77,10 @@
       <h2 id="r-title">記録</h2>
       <div id="r-battle"></div>
       <canvas id="r-image" width="1200" height="630"></canvas>
+      <canvas id="r-replay" width="600" height="800" hidden></canvas>
       <div class="r-scores" id="r-scores"></div>
       <p id="r-made" class="made"></p>
+      <p id="r-words" class="made words"></p>
       <form id="r-submit" class="submit">
         <input id="r-name" maxlength="12" placeholder="名前（12文字まで）" autocomplete="nickname" />
         <button class="btn ink" type="submit">ランキングに登録</button>
@@ -84,6 +89,10 @@
       <div class="row">
         <button id="r-save" class="btn">画像を保存</button>
         <button id="r-share" class="btn">Xでシェア</button>
+      </div>
+      <div class="row">
+        <button id="r-replay-btn" class="btn">リプレイ</button>
+        <button id="r-video" class="btn">動画を保存</button>
       </div>
       <div class="row">
         <button id="r-again" class="btn primary">もう一度</button>
@@ -97,8 +106,13 @@
         <h2>図鑑 <small id="dex-count"></small></h2>
         <button class="icon close" aria-label="閉じる">✕</button>
       </header>
+      <div class="tabs" id="dex-tabs" role="tablist">
+        <button role="tab" data-tab="kanji" aria-selected="true">漢字</button>
+        <button role="tab" data-tab="words" aria-selected="false">熟語</button>
+      </div>
       <div id="dex-detail" class="dex-detail"></div>
       <div id="dex-grid" class="dex-grid"></div>
+      <ul id="dex-words" class="dex-words" hidden></ul>
     </dialog>
 
     <!-- ランキング -->

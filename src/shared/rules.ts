@@ -145,7 +145,8 @@ export function plausible(s: Score & { playMs: number; drops: number }): boolean
   const ints = [s.strokes, s.height, s.count, s.playMs, s.drops];
   if (!ints.every((v) => Number.isInteger(v) && v >= 0)) return false;
   if (s.count < 1 || s.count > 200 || s.drops < s.count) return false;
-  if (s.strokes > s.count * 20 || s.strokes < s.count * 2) return false;
+  // 熟語ボーナスがあるので上限はゆるめ
+  if (s.strokes > s.count * 80 || s.strokes < s.count * 2) return false;
   if (s.height > s.count * 180 + 200) return false;
   if (s.playMs < s.drops * 250) return false;
   return true;

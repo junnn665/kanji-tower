@@ -110,7 +110,42 @@ export const MERGED: (KanjiDef & { parts: [string, string] })[] = [
 ];
 
 export const ALL: KanjiDef[] = [...BASE, ...MERGED];
-const BY_CH = new Map(ALL.map((k) => [k.ch, k]));
+
+/** 対戦のおじゃま字：重くて形が悪い。合体せず、記録（画数・字数）にも数えない */
+export const JAMA: KanjiDef[] = [
+  { ch: "鬱", strokes: 29, note: "おじゃま。" },
+  { ch: "龍", strokes: 16, note: "おじゃま。" },
+  { ch: "轟", strokes: 21, note: "おじゃま。" },
+  { ch: "鷹", strokes: 24, note: "おじゃま。" },
+  { ch: "驚", strokes: 22, note: "おじゃま。" },
+  { ch: "麗", strokes: 19, note: "おじゃま。" },
+];
+const JAMA_SET = new Set(JAMA.map((k) => k.ch));
+export const isJama = (ch: string) => JAMA_SET.has(ch);
+
+/**
+ * 熟語ボーナス：塔の中で、上の字→下の字、または左の字→右の字の順に読んで
+ * この熟語になるとボーナス。[熟語, 読み]
+ */
+export const WORDS: [string, string][] = [
+  ["木目", "もくめ"], ["土木", "どぼく"], ["木立", "こだち"], ["日月", "じつげつ"], ["月日", "つきひ"],
+  ["明日", "あした"], ["日直", "にっちょく"], ["休日", "きゅうじつ"], ["白日", "はくじつ"], ["日米", "にちべい"],
+  ["明月", "めいげつ"], ["人口", "じんこう"], ["人間", "にんげん"], ["人生", "じんせい"], ["人力", "じんりき"],
+  ["人心", "じんしん"], ["仙人", "せんにん"], ["男女", "だんじょ"], ["女子", "じょし"], ["男子", "だんし"],
+  ["王子", "おうじ"], ["女王", "じょおう"], ["女性", "じょせい"], ["男性", "だんせい"], ["田畑", "たはた"],
+  ["水田", "すいでん"], ["火力", "かりょく"], ["水力", "すいりょく"], ["火山", "かざん"], ["火口", "かこう"],
+  ["火星", "かせい"], ["火炎", "かえん"], ["山林", "さんりん"], ["山水", "さんすい"], ["岩石", "がんせき"],
+  ["生糸", "きいと"], ["白米", "はくまい"], ["白金", "はっきん"], ["明白", "めいはく"], ["告白", "こくはく"],
+  ["水星", "すいせい"], ["泉水", "せんすい"], ["雨水", "あまみず"], ["耳目", "じもく"], ["目力", "めぢから"],
+  ["金星", "きんせい"], ["雷雨", "らいう"], ["竹林", "ちくりん"], ["森林", "しんりん"], ["林立", "りんりつ"],
+  ["明星", "みょうじょう"], ["相談", "そうだん"], ["思想", "しそう"], ["意思", "いし"], ["理想", "りそう"],
+  ["出口", "でぐち"], ["出力", "しゅつりょく"], ["吉日", "きちじつ"], ["古米", "こまい"], ["早口", "はやくち"],
+  ["十日", "とおか"],
+];
+const WORD_SET = new Map(WORDS.map(([w, r]) => [w, r]));
+export const wordReading = (w: string) => WORD_SET.get(w);
+
+const BY_CH = new Map([...ALL, ...JAMA].map((k) => [k.ch, k]));
 
 export function kanji(ch: string): KanjiDef {
   const k = BY_CH.get(ch);
@@ -127,9 +162,10 @@ export function mergeOf(a: string, b: string): string | undefined {
 }
 
 /** 字の数字ID（通信を小さくするため） */
-export const INDEX = new Map(ALL.map((k, i) => [k.ch, i]));
+export const NET_CHARS = [...ALL, ...JAMA].map((k) => k.ch);
+export const INDEX = new Map(NET_CHARS.map((ch, i) => [ch, i]));
 
 /** 字の大きさ（1字ぶんの一辺、m）。画数が多いほど大きい */
 export function sizeOf(ch: string): number {
-  return 1.0 + kanji(ch).strokes * 0.04;
+  return Math.min(1.75, 1.0 + kanji(ch).strokes * 0.04);
 }

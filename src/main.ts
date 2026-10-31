@@ -2,7 +2,8 @@ import "./style.css";
 import { Game } from "./game";
 import { glyphsReady } from "./glyph";
 import { drawTowerFit, type Piece } from "./render";
-import { ALL, BASE, INDEX, MERGED, kanji, mergeOf } from "./shared/kanji";
+import { ALL, BASE, INDEX, MERGED, NET_CHARS, WORDS, isJama, kanji, mergeOf, wordReading } from "./shared/kanji";
+import { canRecord, playReplay, recordReplay, saveFile } from "./replay";
 import {
   compareScore,
   KIND_LABEL,
@@ -55,6 +56,17 @@ function setSoundLabel() {
 $("btn-sound").onclick = () => {
   store.set({ sound: !store.get().sound });
   setSoundLabel();
+function setVibeLabel() {
+  $("btn-vibe").textContent = `振動：${store.get().vibrate ? "オン" : "オフ"}`;
+}
+$("btn-vibe").onclick = () => {
+  store.set({ vibrate: !store.get().vibrate });
+  setVibeLabel();
+  if (store.get().vibrate) navigator.vibrate?.(30);
+};
+setVibeLabel();
+// 振動に対応していない端末（iPhone など）ではボタンを出さない
+if (!("vibrate" in navigator)) $("btn-vibe").hidden = true;
 
 // ---------- 難易度 ----------
 function renderModePick() {
@@ -81,6 +93,17 @@ renderModePick();
   sfx("tick");
 };
 setSoundLabel();
+function setVibeLabel() {
+  $("btn-vibe").textContent = `振動：${store.get().vibrate ? "オン" : "オフ"}`;
+}
+$("btn-vibe").onclick = () => {
+  store.set({ vibrate: !store.get().vibrate });
+  setVibeLabel();
+  if (store.get().vibrate) navigator.vibrate?.(30);
+};
+setVibeLabel();
+// 振動に対応していない端末（iPhone など）ではボタンを出さない
+if (!("vibrate" in navigator)) $("btn-vibe").hidden = true;
 
 // ---------- 難易度 ----------
 function renderModePick() {
@@ -142,6 +165,10 @@ function newGame(seed: number, mode: Mode, endsAt?: number): Game {
     onMerge: (ch) => {
       if (store.discover(ch)) toast(`新しい字「${ch}」を発見！`);
     },
+    onWord: (w) => {
+      if (store.discoverWord(w)) toast(`新しい熟語「${w}」（${wordReading(w)}）！`);
+    },
+    isWordKnown: (w) => store.get().words.includes(w),
     onOver: (g) => (battle ? battleOver(g) : soloOver(g)),
     isDiscovered: (ch) => store.get().discovered.includes(ch),
   });
@@ -197,18 +224,52 @@ async function startSolo() {
 }
 $("btn-solo").onclick = startSolo;
 
-let lastResult: { mode: Mode; score: Score; tower: Piece[]; made: string[]; playMs: number; drops: number } | null = null;
+interface ResultInfo {
+  mode: Mode;
+  score: Score;
+  tower: Piece[];
+  made: string[];
+  words: string[];
+  playMs: number;
+  drops: number;
+  replay: Piece[][];
+  /** 今日のお題の日付（本番のときだけ） */
+  daily?: string;
+  practice?: boolean;
+}
+let lastResult: ResultInfo | null = null;
+
+function resultFrom(g: Game): ResultInfo {
+  return {
+    mode: g.opts.mode,
+    score: { ...g.best },
+    tower: g.bestTower,
+    made: [...g.made],
+    words: [...g.words],
+    playMs: g.playMs,
+    drops: g.drops,
+    replay: g.replay.slice(),
+  };
+}
 
 function soloOver(g: Game) {
   const score = { ...g.best };
   const mode = g.opts.mode;
   const updated = store.submitBest(mode, score, g.bestTower);
-  lastResult = { mode, score, tower: g.bestTower, made: [...g.made], playMs: g.playMs, drops: g.drops };
+  lastResult = resultFrom(g);
   setTimeout(() => openResult(updated), 900);
 }
 
 // ---------- 結果 ----------
-function drawResultImage(canvas: HTMLCanvasElement, mode: Mode, score: Score, tower: Piece[], made: string[], title = "合体！漢字タワー") {
+function drawResultImage(
+  canvas: HTMLCanvasElement,
+  mode: Mode,
+  score: Score,
+  tower: Piece[],
+  made: string[],
+  words: string[] = [],
+  title = "合体！漢字タワー",
+) {
   const ctx = canvas.getContext("2d")!;
   const W = 1200;
   const H = 630;
@@ -272,6 +333,11 @@ function drawResultImage(canvas: HTMLCanvasElement, mode: Mode, score: Score, to
     const line = made.slice(0, 12).join(" ") + (made.length > 12 ? " …" : "");
     ctx.fillText(line, 60, 560);
   }
+  if (words.length) {
+    ctx.font = '900 34px "Noto Serif JP", serif';
+    ctx.fillStyle = "#a06f00";
+    ctx.fillText(`熟語 ${words.slice(0, 6).join("・")}${words.length > 6 ? " …" : ""}`, 60, 500);
+  }
   ctx.fillStyle = "#fff";
   ctx.strokeStyle = "#1d2321";
   ctx.lineWidth = 4;
@@ -294,7 +360,15 @@ function openResult(updated: Kind[] = []) {
       }</b><small>${KIND_LABEL[k]}${k === "height" ? " m" : ""}</small></div>`,
   ).join("");
   $("r-made").textContent = made.length ? `作った字：${made.join("")}` : "";
-  document.fonts.ready.then(() => drawResultImage($<HTMLCanvasElement>("r-image"), mode, score, tower, made));
+  $("r-words").textContent = lastResult.words.length ? `熟語：${lastResult.words.join("・")}` : "";
+  stopReplay?.();
+  stopReplay = null;
+  $("r-replay").hidden = true;
+  $("r-image").hidden = false;
+  $("r-replay-btn").textContent = "リプレイ";
+  $<HTMLButtonElement>("r-replay-btn").disabled = !lastResult.replay.length;
+  $<HTMLButtonElement>("r-video").hidden = !canRecord() || !lastResult.replay.length;
+  document.fonts.ready.then(() => drawResultImage($<HTMLCanvasElement>("r-image"), mode, score, tower, made, lastResult!.words));
   const canSubmit = online() && !battle && score.count > 0;
   $("r-submit").hidden = !canSubmit;
   $<HTMLInputElement>("r-name").value = store.get().name;
@@ -329,6 +403,42 @@ $("r-submit").onsubmit = async (e) => {
   }
 };
 
+let stopReplay: (() => void) | null = null;
+const replayOpts = (r: ResultInfo) => ({
+  half: MODE[r.mode].platformHalf,
+  mono: MODE[r.mode].mono,
+  title: `合体！漢字タワー ${MODE[r.mode].name}`,
+});
+$("r-replay-btn").onclick = () => {
+  if (!lastResult?.replay.length) return;
+  const showing = !$("r-replay").hidden;
+  stopReplay?.();
+  stopReplay = null;
+  $("r-replay").hidden = showing;
+  $("r-image").hidden = !showing;
+  $("r-replay-btn").textContent = showing ? "リプレイ" : "結果の画像";
+  if (!showing) stopReplay = playReplay($<HTMLCanvasElement>("r-replay"), lastResult.replay, replayOpts(lastResult));
+};
+$("r-video").onclick = async () => {
+  if (!lastResult?.replay.length) return;
+  const btn = $<HTMLButtonElement>("r-video");
+  btn.disabled = true;
+  btn.textContent = "動画を作っています…";
+  try {
+    const file = await recordReplay(lastResult.replay, replayOpts(lastResult));
+    await saveFile(file, "合体！漢字タワー #合体漢字タワー");
+  } catch (e) {
+    setMsg("r-msg", (e as Error).message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "動画を保存";
+  }
+};
+$<HTMLDialogElement>("dlg-result").addEventListener("close", () => {
+  stopReplay?.();
+  stopReplay = null;
+});
+
 $("r-save").onclick = () => {
   $<HTMLCanvasElement>("r-image").toBlob((blob) => {
     if (!blob) return;
@@ -354,7 +464,7 @@ $("r-share").onclick = () => {
   shareX(
     `${head}合体！漢字タワー（${MODE[mode].name}）で 総画数${score.strokes}・高さ${fmtH(score.height)}m・${score.count}字 積んだ！${
       madeText ? `\n作った字：${madeText}` : ""
-    }\n#合体漢字タワー`,
+    }${lastResult.words.length ? `\n熟語：${lastResult.words.slice(0, 5).join("・")}` : ""}\n#合体漢字タワー`,
   );
 };
 
@@ -380,7 +490,15 @@ $("r-home").onclick = () => {
 let dexCur = "林";
 function openDex() {
   const d = store.get().discovered;
-  $("dex-count").textContent = `${d.length} / ${MERGED.length}`;
+  const wordsTab = $("dex-tabs").querySelector('[aria-selected="true"]')?.getAttribute("data-tab") === "words";
+  const known = store.get().words;
+  $("dex-count").textContent = wordsTab ? `${known.length} / ${WORDS.length}` : `${d.length} / ${MERGED.length}`;
+  $("dex-grid").hidden = wordsTab;
+  $("dex-detail").hidden = wordsTab;
+  $("dex-words").hidden = !wordsTab;
+  $("dex-words").innerHTML = WORDS.map(([w, r]) =>
+    known.includes(w) ? `<li><b>${w}</b><small>${r}</small></li>` : `<li class="locked"><b>？？</b><small>${[...w].map((c) => kanji(c).strokes).join("画＋")}画</small></li>`,
+  ).join("");
   const grid = $("dex-grid");
   grid.innerHTML = "";
   const section = (title: string, list: typeof ALL, lockable: boolean) => {
@@ -427,6 +545,12 @@ function dexDetail() {
   );
 }
 $("btn-dex").onclick = openDex;
+$("dex-tabs").querySelectorAll<HTMLButtonElement>("button").forEach((b) =>
+  b.addEventListener("click", () => {
+    $("dex-tabs").querySelectorAll("button").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+    openDex();
+  }),
+);
 
 // ---------- ランキング ----------
 let rankKind: Kind = "strokes";
@@ -809,7 +933,7 @@ function battleOver(g: Game) {
   clearInterval(b.sendTimer);
   b.client.sendTower(g.best, g.pieces(), INDEX);
   b.client.send({ t: "done", score: g.best });
-  lastResult = { mode: g.opts.mode, score: { ...g.best }, tower: g.bestTower, made: [...g.made], playMs: g.playMs, drops: g.drops };
+  lastResult = resultFrom(g);
   const banner = $("banner");
   banner.hidden = false;
   banner.classList.remove("toast");
@@ -824,7 +948,8 @@ function showBattleResult() {
   const order = [...r.players].filter((p) => p.status !== "left" || p.score.count > 0);
   const me = order.findIndex((p) => p.id === b.me);
   battleRank = me + 1;
-  if (!lastResult) lastResult = { mode: r.mode, score: { strokes: 0, height: 0, count: 0 }, tower: [], made: [], playMs: 0, drops: 0 };
+  if (!lastResult)
+    lastResult = { mode: r.mode, score: { strokes: 0, height: 0, count: 0 }, tower: [], made: [], words: [], playMs: 0, drops: 0, replay: [] };
   $("banner").hidden = true;
   openResult();
   $("r-title").textContent = battleRank === 1 ? "勝ち！" : `${battleRank}位`;

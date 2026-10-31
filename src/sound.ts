@@ -2,7 +2,7 @@ import { store } from "./storage";
 
 let ac: AudioContext | null = null;
 
-type Kind = "tick" | "drop" | "land" | "merge" | "fall" | "end" | "win";
+type Kind = "tick" | "drop" | "land" | "merge" | "fall" | "end" | "win" | "word" | "jama";
 
 const TONES: Record<Kind, [number, number, number, OscillatorType][]> = {
   // [周波数, 開始秒, 長さ, 波形]
@@ -18,6 +18,15 @@ const TONES: Record<Kind, [number, number, number, OscillatorType][]> = {
     [180, 0.12, 0.3, "sawtooth"],
   ],
   end: [[440, 0, 0.25, "sine"]],
+  word: [
+    [784, 0, 0.1, "triangle"],
+    [988, 0.09, 0.1, "triangle"],
+    [1319, 0.18, 0.22, "triangle"],
+  ],
+  jama: [
+    [140, 0, 0.18, "square"],
+    [110, 0.14, 0.25, "square"],
+  ],
   win: [
     [523, 0, 0.12, "triangle"],
     [659, 0.12, 0.12, "triangle"],
@@ -45,5 +54,15 @@ export function sfx(kind: Kind) {
     }
   } catch {
     /* 音が出せない環境では何もしない */
+  }
+}
+
+/** スマホを震わせる（対応している端末だけ。iPhone の Safari は未対応） */
+export function buzz(pattern: number | number[]) {
+  if (!store.get().vibrate) return;
+  try {
+    navigator.vibrate?.(pattern);
+  } catch {
+    /* 震えない端末では何もしない */
   }
 }
