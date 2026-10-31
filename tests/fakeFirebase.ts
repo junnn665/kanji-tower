@@ -132,6 +132,9 @@ export const orderByKey = (): Cons => ({ kind: "orderByKey" });
 
 export const get = async (r: Ref) => {
   await ready;
+  // 本物と同じく、索引のない子での並べかえは get() では断られる（索引は rooms の created だけ）
+  const by = (r.cons?.find((c) => c.kind === "orderByChild") as { key: string } | undefined)?.key;
+  if (by && !(r.path === "rooms" && by === "created")) throw new Error(`Index not defined, add ".indexOn": "${by}", for path "/${r.path}", to the rules`);
   return snapOf(r);
 };
 export const set = async (r: Ref, v: Json) => commit([[r.path, v]]);
@@ -153,7 +156,7 @@ export const runTransaction = async (r: Ref, fn: (cur: Json) => Json) => {
 };
 export const onDisconnect = (_r: Ref) => ({ set: async () => {}, cancel: async () => {} });
 
-export function onValue(r: Ref, cb: (s: Snap) => void) {
+export function onValue(r: Ref, cb: (s: Snap) => void, _err?: (e: Error) => void, opts?: { onlyOnce?: boolean }) {
   let last = "\u0000";
   const l = {
     path: r.path,
@@ -162,6 +165,7 @@ export function onValue(r: Ref, cb: (s: Snap) => void) {
       const j = JSON.stringify(s.val());
       if (j === last) return;
       last = j;
+      if (opts?.onlyOnce) listeners.delete(l);
       cb(s);
     },
   };

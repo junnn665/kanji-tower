@@ -35,6 +35,14 @@ function fb(): Promise<FB> {
 }
 
 const now = () => Date.now() + offset;
+
+/**
+ * 並べかえ付きの読み取り。get() はデータベースのルールに索引（.indexOn）がないと断られるので、
+ * prefpack と同じく1回だけの購読で読む（索引がなければ端末側で並べかえてくれる）。
+ */
+function once(m: FB, q: import("firebase/database").Query): Promise<import("firebase/database").DataSnapshot> {
+  return new Promise((resolve, reject) => m.onValue(q, resolve, reject, { onlyOnce: true }));
+}
 const PID = () => store.get().device.replace(/-/g, "").slice(0, 16);
 const ROOM = (code: string) => `rooms/kanji-${code}`;
 const LIVE = (code: string) => `rooms/kanji-${code}-live`;
@@ -69,7 +77,7 @@ export type Board = Mode | `daily-${string}`;
 
 async function fetchKind(mode: Board, kind: Kind) {
   const m = await fb();
-  const snap = await m.get(m.query(m.ref(m.db, `${RANK}/${mode}/${kind}`), m.orderByChild(kind), m.limitToLast(100)));
+  const snap = await once(m, m.query(m.ref(m.db, `${RANK}/${mode}/${kind}`), m.orderByChild(kind), m.limitToLast(100)));
   const rows: (RankRow & { id: string })[] = [];
   snap.forEach((c) => {
     const v = c.val();
@@ -135,7 +143,7 @@ async function prune(mode: Board) {
     // 1週間より前の今日のお題を消す
     if (mode.startsWith("daily-")) {
       const old = new Date(Date.now() + 9 * 3600_000 - 7 * 86_400_000).toISOString().slice(0, 10).replace(/-/g, "");
-      const snap = await m.get(m.query(m.ref(m.db, RANK), m.orderByKey(), m.startAt("daily-"), m.endAt(`daily-${old}`), m.limitToFirst(5)));
+      const snap = await once(m, m.query(m.ref(m.db, RANK), m.orderByKey(), m.startAt("daily-"), m.endAt(`daily-${old}`), m.limitToFirst(5)));
       const jobs: Promise<void>[] = [];
       snap.forEach((c) => {
         if (/^daily-\d{8}$/.test(c.key!) && c.key! <= `daily-${old}`) jobs.push(m.remove(c.ref));
@@ -143,7 +151,7 @@ async function prune(mode: Board) {
       await Promise.all(jobs);
     }
     for (const k of KINDS) {
-      const snap = await m.get(m.query(m.ref(m.db, `${RANK}/${mode}/${k}`), m.orderByChild(k)));
+      const snap = await once(m, m.query(m.ref(m.db, `${RANK}/${mode}/${k}`), m.orderByChild(k)));
       const n = snap.size;
       if (n <= 300) continue;
       const jobs: Promise<void>[] = [];
@@ -268,7 +276,7 @@ export async function createRoom(host = PID()): Promise<string> {
   try {
     const m = await fb();
     // 古い漢字タワーの部屋を少しずつ片づける（ほかのゲームの部屋とランキングには触れない）
-    m.get(m.query(m.ref(m.db, "rooms"), m.orderByChild("created"), m.endAt(now() - ROOM_TTL), m.limitToFirst(30)))
+    once(m, m.query(m.ref(m.db, "rooms"), m.orderByChild("created"), m.endAt(now() - ROOM_TTL), m.limitToFirst(30)))
       .then((snap) => {
         snap.forEach((c) => {
           const v = c.val();
