@@ -111,6 +111,17 @@ describe("ランキング（Firebase）", () => {
     expect((rooms["kanji-ranking"] as { created: number }).created).toBe(9e15);
   });
 
+  it("今日のお題は日付ごとで、1週間より前の日は消える", async () => {
+    const base = { playMs: 60_000, drops: 20 };
+    await fake.set(fake.ref(fake.db, "rooms/kanji-ranking/daily-20200101/strokes/x"), { name: "昔", strokes: 9, height: 1, count: 1 });
+    const today = `daily-${new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10).replace(/-/g, "")}` as const;
+    await submitScore(today, "きょう", { strokes: 30, height: 200, count: 5, ...base });
+    await tick(30);
+    const rk = fake.dump().rooms as Record<string, Record<string, unknown>>;
+    expect(Object.keys(rk["kanji-ranking"]).sort()).toEqual(["created", today]);
+    expect((await getRanking(today, "strokes", true))[0].name).toBe("きょう");
+  });
+
   it("ありえない記録は送らない", async () => {
     await expect(submitScore("normal", "ずる", { strokes: 999, height: 1, count: 1, playMs: 1, drops: 1 })).rejects.toThrow();
   });

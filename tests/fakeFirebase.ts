@@ -1,6 +1,10 @@
 // テスト用：Firebase Realtime Database の、このゲームで使う部分だけをメモリー上でまねる
 type Json = unknown;
-type Cons = { kind: "orderByChild"; key: string } | { kind: "limitToLast" | "limitToFirst"; n: number } | { kind: "endAt"; v: number };
+type Cons =
+  | { kind: "orderByChild"; key: string }
+  | { kind: "orderByKey" }
+  | { kind: "limitToLast" | "limitToFirst"; n: number }
+  | { kind: "endAt" | "startAt"; v: number | string };
 interface Ref {
   path: string;
   key: string | null;
@@ -72,14 +76,17 @@ function snapOf(r: Ref): Snap {
   if (r.path === ".info/connected") return new Snap("connected", true, r);
   let v = read(r.path);
   if (!r.cons?.length || !v || typeof v !== "object") return new Snap(r.key, v, r);
+  const byKey = r.cons.some((c) => c.kind === "orderByKey");
   const by = (r.cons.find((c) => c.kind === "orderByChild") as { key: string } | undefined)?.key;
-  const val = (k: string) => {
+  const val = (k: string): number | string => {
+    if (byKey) return k;
     const c = (v as Record<string, Record<string, number>>)[k];
-    return c && typeof c === "object" ? (c[by!] ?? null) : null;
+    return c && typeof c === "object" ? (c[by!] ?? -Infinity) : -Infinity;
   };
-  let keys = Object.keys(v as object).sort((a, b) => ((val(a) ?? -Infinity) as number) - ((val(b) ?? -Infinity) as number));
+  let keys = Object.keys(v as object).sort((a, b) => (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0));
   for (const c of r.cons) {
-    if (c.kind === "endAt") keys = keys.filter((k) => (val(k) ?? -Infinity) <= c.v);
+    if (c.kind === "endAt") keys = keys.filter((k) => val(k) <= c.v);
+    if (c.kind === "startAt") keys = keys.filter((k) => val(k) >= c.v);
     if (c.kind === "limitToLast") keys = keys.slice(-c.n);
     if (c.kind === "limitToFirst") keys = keys.slice(0, c.n);
   }
@@ -94,7 +101,9 @@ export const query = (r: Ref, ...cons: Cons[]): Ref => ({ ...r, cons });
 export const orderByChild = (key: string): Cons => ({ kind: "orderByChild", key });
 export const limitToLast = (n: number): Cons => ({ kind: "limitToLast", n });
 export const limitToFirst = (n: number): Cons => ({ kind: "limitToFirst", n });
-export const endAt = (v: number): Cons => ({ kind: "endAt", v });
+export const endAt = (v: number | string): Cons => ({ kind: "endAt", v });
+export const startAt = (v: number | string): Cons => ({ kind: "startAt", v });
+export const orderByKey = (): Cons => ({ kind: "orderByKey" });
 
 export const get = async (r: Ref) => snapOf(r);
 export const set = async (r: Ref, v: Json) => {

@@ -53,6 +53,10 @@ button { cursor: pointer; }
 .btn:active { transform: translateY(3px); box-shadow: 0 0 0 var(--ink); }
 .btn.primary { background: var(--shu); color: #fff; }
 .btn.ink { background: var(--ai); color: #fff; }
+.btn.daily {
+  background: var(--gold); display: flex; justify-content: center; align-items: baseline; gap: 10px;
+}
+.btn.daily small { font-size: 12px; font-weight: 700; color: #5a4300; }
 .btn:disabled { opacity: 0.45; pointer-events: none; }
 .row { display: flex; gap: 10px; }
 .row > * { flex: 1; }
@@ -66,9 +70,9 @@ button { cursor: pointer; }
 /* ---------- タイトル ---------- */
 #title {
   align-items: center;
-  justify-content: center;
-  gap: 22px;
-  padding: 24px;
+  gap: 18px;
+  padding: 24px 24px calc(16px + var(--safe-b));
+  overflow-y: auto;
   background:
     linear-gradient(var(--grid-faint) 1px, transparent 1px) 0 0 / 56px 56px,
     linear-gradient(90deg, var(--grid-faint) 1px, transparent 1px) 0 0 / 56px 56px,
@@ -77,12 +81,12 @@ button { cursor: pointer; }
 .logo { position: relative; text-align: center; }
 .logo h1 {
   margin: 0;
-  font: 900 clamp(76px, 26vw, 118px)/1.02 var(--kanji);
+  font: 900 clamp(60px, min(26vw, 13dvh), 118px)/1.02 var(--kanji);
   letter-spacing: 0.04em;
 }
 .stamp {
   position: absolute;
-  top: -14px; left: -30px;
+  top: -6px; left: -30px;
   background: var(--shu);
   color: #fff;
   font: 900 22px/1 var(--ui);
@@ -108,11 +112,14 @@ button { cursor: pointer; }
 .modes button[aria-checked="true"] { background: var(--ink); color: #fff; }
 .modes button[data-mode="hard"][aria-checked="true"] { background: var(--shu); }
 .mode-desc { margin: -12px 0 0; min-height: 1.5em; font-size: 13px; color: var(--ink-soft); font-weight: 700; text-align: center; }
+/* 縮めずに、入りきらなければスクロール。上下の余白で中央に寄せる */
+#title > * { flex-shrink: 0; }
+#title > :first-child { margin-top: auto; }
+#title > :last-child { margin-bottom: auto; }
 .credit {
-  position: absolute; bottom: calc(14px + var(--safe-b)); left: 0; right: 0;
+  margin-top: 2px;
   text-align: center; font: 700 13px/1 var(--kanji); letter-spacing: .2em; color: var(--ink-soft);
 }
-#title { position: relative; }
 .sound {
   border: 0; background: none; color: var(--ink-soft);
   font-size: 14px; text-decoration: underline; text-underline-offset: 3px;
@@ -333,6 +340,8 @@ dialog > .row, dialog .row { margin-top: 10px; }
 }
 .lobby-mode:disabled { color: var(--ink); opacity: 1; cursor: default; }
 .modes-tabs button[aria-selected="true"] { background: var(--shu); border-color: var(--shu); }
+.tabs button { white-space: nowrap; }
+.modes-tabs button { padding: 5px 2px; font-size: 14px; }
 .code-label { margin: 0; text-align: center; font-weight: 700; color: var(--ink-soft); }
 
 /* 部屋番号：練習帳のマス目に1字ずつ */

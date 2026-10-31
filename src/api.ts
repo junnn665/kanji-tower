@@ -4,7 +4,7 @@
 //   rooms/kanji-<4桁>        部屋：game, created, host, state, round, seed, startAt, endAt
 //     players/<pid>          name, joined, online, round, status("playing"|"done"), score, doneAt
 //   rooms/kanji-<4桁>-live   対戦中の塔：<pid> = { s: 記録, t: 塔(JSON) }。部屋本体と分けて通信を軽くする
-//   rooms/kanji-ranking      ランキング：created(=9e15、自動おそうじ対象外), <難易度>/<種目>/<id> = 記録
+//   rooms/kanji-ranking      ランキング：created(=9e15、自動おそうじ対象外), <難易度 または daily-YYYYMMDD>/<種目>/<id> = 記録
 //
 // Firebase は使うときに読み込む（ひとり用は Firebase なしですぐ遊べる）。
 import type { Piece } from "./render";
@@ -57,7 +57,10 @@ export interface RankRow extends Score {
 
 const cache = new Map<string, { t: number; rows: (RankRow & { id: string })[] }>();
 
-async function fetchKind(mode: Mode, kind: Kind) {
+/** board：難易度（easy/normal/hard）か、今日のお題（daily-YYYYMMDD） */
+export type Board = Mode | `daily-${string}`;
+
+async function fetchKind(mode: Board, kind: Kind) {
   const m = await fb();
   const snap = await m.get(m.query(m.ref(m.db, `${RANK}/${mode}/${kind}`), m.orderByChild(kind), m.limitToLast(100)));
   const rows: (RankRow & { id: string })[] = [];
@@ -70,7 +73,7 @@ async function fetchKind(mode: Mode, kind: Kind) {
   return rows;
 }
 
-export async function getRanking(mode: Mode, kind: Kind, force = false): Promise<RankRow[]> {
+export async function getRanking(mode: Board, kind: Kind, force = false): Promise<RankRow[]> {
   const c = cache.get(`${mode}/${kind}`);
   if (!force && c && Date.now() - c.t < 60_000) return c.rows;
   try {
@@ -84,7 +87,7 @@ const sentAt: number[] = [];
 
 /** 送ったあとの各種目の順位（100位より下は null） */
 export async function submitScore(
-  mode: Mode,
+  mode: Board,
   name: string,
   s: Score & { playMs: number; drops: number },
 ): Promise<Record<Kind, number | null>> {
@@ -114,9 +117,19 @@ export async function submitScore(
 }
 
 /** 各種目、下位を消して200件ほどに保つ（データベースを大きくしないため） */
-async function prune(mode: Mode) {
+async function prune(mode: Board) {
   try {
     const m = await fb();
+    // 1週間より前の今日のお題を消す
+    if (mode.startsWith("daily-")) {
+      const old = new Date(Date.now() + 9 * 3600_000 - 7 * 86_400_000).toISOString().slice(0, 10).replace(/-/g, "");
+      const snap = await m.get(m.query(m.ref(m.db, RANK), m.orderByKey(), m.startAt("daily-"), m.endAt(`daily-${old}`), m.limitToFirst(5)));
+      const jobs: Promise<void>[] = [];
+      snap.forEach((c) => {
+        if (/^daily-\d{8}$/.test(c.key!) && c.key! <= `daily-${old}`) jobs.push(m.remove(c.ref));
+      });
+      await Promise.all(jobs);
+    }
     for (const k of KINDS) {
       const snap = await m.get(m.query(m.ref(m.db, `${RANK}/${mode}/${k}`), m.orderByChild(k)));
       const n = snap.size;

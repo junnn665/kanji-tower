@@ -147,6 +147,11 @@ function renderHud(g: Game) {
     tray.append(b);
   });
   $("btn-pause").textContent = g.paused ? "▶" : "Ⅱ";
+  if (g.dropsLeft !== null) {
+    $("timer").hidden = false;
+    $("timer").textContent = `${g.dropsLeft}字`;
+    $("timer").classList.toggle("hurry", g.dropsLeft <= 3);
+  }
   const banner = $("banner");
   if (g.paused) {
     banner.hidden = false;
@@ -155,11 +160,12 @@ function renderHud(g: Game) {
   } else if (!battle) banner.hidden = true;
 }
 
-function newGame(seed: number, mode: Mode, endsAt?: number): Game {
+function newGame(seed: number, mode: Mode, endsAt?: number, dropLimit?: number): Game {
   game?.destroy();
   const g = new Game($<HTMLCanvasElement>("canvas"), {
     seed,
     mode,
+    dropLimit,
     endsAt,
     onChange: renderHud,
     onMerge: (ch) => {
@@ -213,6 +219,7 @@ window.addEventListener("keydown", (e) => {
 // ---------- ひとり用 ----------
 async function startSolo() {
   await glyphsReady();
+  dailyNow = null;
   closeAll();
   battle = null;
   $("timer").hidden = true;
@@ -223,6 +230,41 @@ async function startSolo() {
   newGame((Math.random() * 2 ** 32) >>> 0, store.get().mode);
 }
 $("btn-solo").onclick = startSolo;
+
+// ---------- 今日のお題 ----------
+const DAILY_DROPS = 20;
+/** 日本時間の今日（YYYYMMDD） */
+const todayKey = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10).replace(/-/g, "");
+const dailyBoard = (d: string) => `daily-${d}` as const;
+const dailyLabel = (d: string) => `${Number(d.slice(4, 6))}/${Number(d.slice(6, 8))}`;
+function dailySeed(d: string) {
+  let h = 2166136261;
+  for (const c of `kanji-tower:${d}`) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+let dailyNow: { date: string; practice: boolean } | null = null;
+
+function renderDailyButton() {
+  const d = todayKey();
+  const rec = store.get().daily[d];
+  $("daily-sub").textContent = rec ? `${dailyLabel(d)} 本番 ${rec.strokes}画・練習できます` : `${dailyLabel(d)}・20字で勝負`;
+}
+renderDailyButton();
+
+async function startDaily() {
+  await glyphsReady();
+  const date = todayKey();
+  dailyNow = { date, practice: !!store.get().daily[date] };
+  closeAll();
+  battle = null;
+  $("rivals").hidden = true;
+  $("btn-pause").hidden = false;
+  $("banner").hidden = true;
+  show("play");
+  newGame(dailySeed(date), "normal", undefined, DAILY_DROPS);
+  toast(dailyNow.practice ? `今日のお題（${dailyLabel(date)}）練習` : `今日のお題（${dailyLabel(date)}）本番！ 20字で勝負`);
+}
+$("btn-daily").onclick = startDaily;
 
 interface ResultInfo {
   mode: Mode;
@@ -254,9 +296,19 @@ function resultFrom(g: Game): ResultInfo {
 
 function soloOver(g: Game) {
   const score = { ...g.best };
-  const mode = g.opts.mode;
-  const updated = store.submitBest(mode, score, g.bestTower);
   lastResult = resultFrom(g);
+  if (dailyNow) {
+    lastResult.daily = dailyNow.date;
+    lastResult.practice = dailyNow.practice;
+    if (!dailyNow.practice) {
+      store.set({ daily: { ...store.get().daily, [dailyNow.date]: { ...score, words: g.words.length } } });
+      dailyNow.practice = true;
+    }
+    renderDailyButton();
+    setTimeout(() => openResult([]), 900);
+    return;
+  }
+  const updated = store.submitBest(g.opts.mode, score, g.bestTower);
   setTimeout(() => openResult(updated), 900);
 }
 
@@ -351,7 +403,11 @@ function drawResultImage(
 function openResult(updated: Kind[] = []) {
   if (!lastResult) return;
   const { mode, score, tower, made } = lastResult;
-  $("r-title").innerHTML = `${game?.overReason === "fall" ? "落ちた！" : "記録"} <small>${MODE[mode].name}</small>`;
+  const over = game?.overReason === "fall" ? "落ちた！" : game?.overReason === "limit" ? "20字おわり！" : "記録";
+  const tag = lastResult.daily
+    ? `今日のお題 ${dailyLabel(lastResult.daily)}${lastResult.practice ? "（練習）" : "（本番）"}`
+    : MODE[mode].name;
+  $("r-title").innerHTML = `${over} <small>${tag}</small>`;
   $("r-battle").innerHTML = "";
   $("r-scores").innerHTML = KINDS.map(
     (k) =>
@@ -369,10 +425,10 @@ function openResult(updated: Kind[] = []) {
   $<HTMLButtonElement>("r-replay-btn").disabled = !lastResult.replay.length;
   $<HTMLButtonElement>("r-video").hidden = !canRecord() || !lastResult.replay.length;
   document.fonts.ready.then(() => drawResultImage($<HTMLCanvasElement>("r-image"), mode, score, tower, made, lastResult!.words));
-  const canSubmit = online() && !battle && score.count > 0;
+  const canSubmit = online() && !battle && score.count > 0 && !lastResult.practice;
   $("r-submit").hidden = !canSubmit;
   $<HTMLInputElement>("r-name").value = store.get().name;
-  setMsg("r-msg", online() || battle ? "" : "ランキングはサーバー設定後に使えます");
+  setMsg("r-msg", lastResult.practice ? "練習の記録は今日のランキングに入りません（本番は1日1回）" : "");
   $("r-again").textContent = battle ? (battle.isHost() ? "もう一度対戦" : "部屋にもどる") : "もう一度";
   const dlg = $<HTMLDialogElement>("dlg-result");
   if (!dlg.open) dlg.showModal();
@@ -394,8 +450,9 @@ $("r-submit").onsubmit = async (e) => {
   btn.disabled = true;
   setMsg("r-msg", "送信中…");
   try {
-    const ranks = await submitScore(lastResult.mode, name, { ...lastResult.score, playMs: lastResult.playMs, drops: lastResult.drops });
-    setMsg("r-msg", `${MODE[lastResult.mode].name}に登録しました：${KINDS.map((k) => `${KIND_LABEL[k]} ${ranks[k] ? `${ranks[k]}位` : "ランク外"}`).join("／")}`);
+    const board = lastResult.daily ? dailyBoard(lastResult.daily) : lastResult.mode;
+    const ranks = await submitScore(board, name, { ...lastResult.score, playMs: lastResult.playMs, drops: lastResult.drops });
+    setMsg("r-msg", `${lastResult.daily ? "今日のランキング" : MODE[lastResult.mode].name}に登録しました：${KINDS.map((k) => `${KIND_LABEL[k]} ${ranks[k] ? `${ranks[k]}位` : "ランク外"}`).join("／")}`);
     $("r-submit").hidden = true;
   } catch (err) {
     setMsg("r-msg", `${(err as Error).message}。画像の保存はできます`, true);
@@ -461,6 +518,14 @@ $("r-share").onclick = () => {
   let madeText = made.join("");
   if (madeText.length > 20) madeText = madeText.slice(0, 20) + "…";
   const head = battle && battleRank ? `対戦で${battleRank}位！ ` : "";
+  if (lastResult.daily) {
+    shareX(
+      `合体！漢字タワー 今日のお題 ${dailyLabel(lastResult.daily)}\n20字で 総画数${score.strokes}・高さ${fmtH(score.height)}m・熟語${lastResult.words.length}個${
+        lastResult.words.length ? `\n${lastResult.words.join("・")}` : ""
+      }\n#合体漢字タワー #今日のお題`,
+    );
+    return;
+  }
   shareX(
     `${head}合体！漢字タワー（${MODE[mode].name}）で 総画数${score.strokes}・高さ${fmtH(score.height)}m・${score.count}字 積んだ！${
       madeText ? `\n作った字：${madeText}` : ""
@@ -476,7 +541,8 @@ $("r-again").onclick = () => {
     game = null;
     show("title");
     openRoomLobby();
-  } else startSolo();
+  } else if (lastResult?.daily) startDaily();
+  else startSolo();
 };
 $("r-home").onclick = () => {
   $<HTMLDialogElement>("dlg-result").close();
@@ -554,15 +620,16 @@ $("dex-tabs").querySelectorAll<HTMLButtonElement>("button").forEach((b) =>
 
 // ---------- ランキング ----------
 let rankKind: Kind = "strokes";
-let rankMode: Mode | null = null;
-function openRank() {
+let rankMode: Mode | "daily" | null = null;
+function openRank(prefer?: Mode | "daily") {
   const dlgOpen = $<HTMLDialogElement>("dlg-rank").open;
-  if (!dlgOpen || !rankMode) rankMode = store.get().mode;
+  if (prefer) rankMode = prefer;
+  else if (!dlgOpen || !rankMode) rankMode = store.get().mode;
   const modes = $("rank-modes");
   modes.innerHTML = "";
-  for (const m of MODES) {
+  for (const m of [...MODES, "daily" as const]) {
     const b = document.createElement("button");
-    b.textContent = MODE[m].name;
+    b.textContent = m === "daily" ? "今日" : MODE[m].name;
     b.setAttribute("role", "tab");
     b.setAttribute("aria-selected", String(m === rankMode));
     b.onclick = () => {
@@ -584,10 +651,17 @@ function openRank() {
     };
     tabs.append(b);
   }
-  const best = store.get().best[rankMode]?.[rankKind];
-  $("rank-mine").textContent = best
-    ? `自己ベスト：${rankKind === "height" ? fmtH(best.height) + " m" : best[rankKind]}（総画数${best.strokes}・高さ${fmtH(best.height)}m・${best.count}字）`
-    : "自己ベストはまだありません";
+  if (rankMode === "daily") {
+    const rec = store.get().daily[todayKey()];
+    $("rank-mine").textContent = rec
+      ? `今日のお題 ${dailyLabel(todayKey())} の本番：総画数${rec.strokes}・高さ${fmtH(rec.height)}m・${rec.count}字・熟語${rec.words}個`
+      : `今日のお題 ${dailyLabel(todayKey())}：まだ遊んでいません`;
+  } else {
+    const best = store.get().best[rankMode]?.[rankKind];
+    $("rank-mine").textContent = best
+      ? `自己ベスト：${rankKind === "height" ? fmtH(best.height) + " m" : best[rankKind]}（総画数${best.strokes}・高さ${fmtH(best.height)}m・${best.count}字）`
+      : "自己ベストはまだありません";
+  }
   const list = $("rank-list");
   list.innerHTML = "";
   const dlg = $<HTMLDialogElement>("dlg-rank");
@@ -596,7 +670,7 @@ function openRank() {
   setMsg("rank-msg", "読み込み中…");
   const kind = rankKind;
   const mode = rankMode;
-  getRanking(mode, kind)
+  getRanking(mode === "daily" ? dailyBoard(todayKey()) : mode, kind)
     .then((rows) => {
       if (kind !== rankKind || mode !== rankMode) return;
       setMsg("rank-msg", rows.length ? "上位100件" : "まだ記録がありません。最初の1人になろう");
@@ -611,7 +685,7 @@ function openRank() {
     })
     .catch((e) => setMsg("rank-msg", `${(e as Error).message}。ゲームはそのまま遊べます`, true));
 }
-$("btn-rank").onclick = openRank;
+$("btn-rank").onclick = () => openRank();
 
 // ---------- 対戦 ----------
 interface Battle {
