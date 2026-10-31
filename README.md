@@ -96,6 +96,16 @@ curl https://<Worker の URL>/health     # {"ok":true} なら OK
 - サーバー：`npm run deploy:worker`
 - DB の変更：`server/migrations/` に番号を続けたファイルを足して `npm run db:migrate`
 
+## ホーム画面のアイコン
+
+元絵は `tools/icon.svg`。`public/` の `icon-192.png`・`icon-512.png`（Android 用、丸く切り抜かれても欠けない）と `apple-touch-icon.png`（iPhone 用）は次で作り直せる（Playwright と日本語フォント Noto Serif CJK JP が必要）。
+
+```sh
+python3 tools/build-icons.py
+```
+
+ホーム画面に追加すると、ブラウザーの枠なしで全画面で開く（`public/manifest.webmanifest`）。
+
 ## ランキングと保存する情報
 
 - 種目は総画数・高さ・字数。最近90日の上位100件を表示する

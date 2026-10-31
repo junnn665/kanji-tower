@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- ホーム画面用アイコン。中心から半径205px（80%）の中に収め、丸く切り抜かれても欠けないようにする -->
+  <defs>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" fill="none" stroke="#cfe3d4" stroke-width="2"/>
+    </pattern>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="#f6faf4"/>
+  <rect width="512" height="512" fill="url(#grid)"/>
+
+  <!-- 台 -->
+  <rect x="226" y="408" width="60" height="70" fill="#4a392c"/>
+  <rect x="136" y="384" width="240" height="30" rx="7" fill="#5b4636"/>
+  <rect x="136" y="384" width="240" height="8" fill="#7a5f49"/>
+
+  <!-- 林（下） -->
+  <rect x="150" y="300" width="212" height="84" rx="4" fill="#f7d6d0" stroke="#1d2321" stroke-width="7"/>
+  <text x="256" y="340" font-family="Noto Serif CJK JP" font-weight="900" font-size="64" text-anchor="middle" dominant-baseline="central" fill="#1d2321">林</text>
+
+  <!-- 森（上、合体できる金の三角） -->
+  <g transform="rotate(-6 256 220)">
+    <polygon points="160,296 352,296 256,132" fill="#f0b429" filter="url(#glow)" opacity=".75"/>
+    <polygon points="160,296 352,296 256,132" fill="#f3c96b" stroke="#1d2321" stroke-width="7" stroke-linejoin="round"/>
+    <text x="256" y="250" font-family="Noto Serif CJK JP" font-weight="900" font-size="74" text-anchor="middle" dominant-baseline="central" fill="#1d2321">森</text>
+  </g>
+
+  <!-- 合体のはんこ -->
+  <g transform="rotate(10 352 138)">
+    <rect x="316" y="102" width="72" height="72" rx="10" fill="#e2412b"/>
+    <rect x="322" y="108" width="60" height="60" rx="6" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="3"/>
+    <text x="352" y="139" font-family="Noto Sans CJK JP" font-weight="900" font-size="48" text-anchor="middle" dominant-baseline="central" fill="#fff">合</text>
+  </g>
+</svg>
