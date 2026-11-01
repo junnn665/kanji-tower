@@ -1156,6 +1156,7 @@ function startBattleGame(room: RoomState) {
       $("timer").classList.toggle("hurry", secs <= 10);
       if (room.play === "vs") sortRivals();
       renderTurn();
+      checkClinch();
     }, 150);
   };
   tick();
@@ -1226,6 +1227,37 @@ function keepTurn() {
   if (!b?.boxHost || !b.myTeam) return;
   const order = turnOrder();
   if (order.length && !order.includes(b.turn)) advanceTurn();
+}
+
+/**
+ * 勝ちが確定したら終わる。記録（最高到達）は減らないので、ほかの全員（チーム戦は相手チーム）が
+ * もう終わっていて、自分のほうが上なら、それ以上抜かれることはない。
+ */
+function checkClinch() {
+  const b = battle;
+  const r = b?.room;
+  if (!b || !r || r.phase !== "playing" || !game || game.over || game.control === "mirror") return;
+  const mine = game.best;
+  if (mine.count === 0) return;
+  if (r.play === "vs") {
+    const others = r.players.filter((p) => p.id !== b.me && !p.spec && p.status !== "lobby");
+    if (!others.length || others.some((p) => p.status === "playing")) return;
+    const theirs = (id: string, s: Score) => {
+      const live = b.rivals.get(id)?.score;
+      return live && compareScore("strokes", live, s) < 0 ? live : s;
+    };
+    if (others.every((p) => compareScore("strokes", mine, theirs(p.id, p.score)) < 0)) game.end("win");
+    return;
+  }
+  if (r.play === "team" && b.boxHost) {
+    const other = r.teams.find((t) => t.id !== b.myTeam);
+    if (!other) return;
+    const otherHostGone = r.players.find((p) => p.id === other.host)?.status === "left";
+    if (other.status !== "done" && !otherHostGone) return;
+    const live = b.rivals.get(other.id)?.score;
+    const theirs = live && compareScore("strokes", live, other.score) < 0 ? live : other.score;
+    if (compareScore("strokes", mine, theirs) < 0) game.end("win");
+  }
 }
 
 function renderTurn() {
@@ -1311,7 +1343,8 @@ function battleOver(g: Game) {
   const banner = $("banner");
   banner.hidden = false;
   banner.classList.remove("toast");
-  banner.innerHTML = `${g.overReason === "time" ? "終了！" : "落ちた！"}<small>${b.room.play === "vs" ? "ほかの人" : "ほかのチーム"}を待っています…</small>`;
+  const head = g.overReason === "win" ? "勝ち確定！" : g.overReason === "time" ? "終了！" : "落ちた！";
+  banner.innerHTML = `${head}<small>${b.room.play === "vs" ? "ほかの人" : "ほかのチーム"}を待っています…</small>`;
 }
 
 function resultTable(r: RoomState, me: string): { html: string; rank: number; title: string } {

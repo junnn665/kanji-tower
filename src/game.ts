@@ -73,7 +73,7 @@ const VIEW_W = 8; // 画面の横幅（m）
 const STEP = 1 / 60;
 const REPLAY_FRAMES = 160; // 約8秒（20コマ/秒）
 
-export type OverReason = "fall" | "time" | "quit" | "limit";
+export type OverReason = "fall" | "time" | "quit" | "limit" | "win";
 
 export class Game {
   readonly world = new World({ gravity: Vec2(0, -10) });
@@ -400,8 +400,9 @@ export class Game {
     if (this.over) return;
     this.over = true;
     this.overReason = reason;
-    sfx(reason === "fall" ? "fall" : "end");
+    sfx(reason === "fall" ? "fall" : reason === "win" ? "win" : "end");
     if (reason === "fall") buzz([60, 40, 120]);
+    if (reason === "win") buzz([40, 40, 40, 40, 120]);
     this.opts.onChange?.(this);
     this.opts.onOver?.(this);
   }
