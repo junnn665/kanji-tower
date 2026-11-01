@@ -123,7 +123,8 @@ export class Game {
     this.ctx = canvas.getContext("2d")!;
     this.rand = rng(opts.seed);
     const ground = this.world.createBody({ type: "static", position: Vec2(0, -PLATFORM_H / 2) });
-    ground.createFixture(new Box(this.def.platformHalf, PLATFORM_H / 2), { friction: 0.9 });
+    // 台も字と同じくらいすべりにくくする（難易度で変わる）
+    ground.createFixture(new Box(this.def.platformHalf, PLATFORM_H / 2), { friction: this.def.friction });
     ground.setUserData({ ch: "", landed: true, alive: true, flash: 0, gold: 0, jama: false } satisfies Meta);
     this.world.on("begin-contact", (c) => {
       const a = c.getFixtureA().getBody();
@@ -249,7 +250,7 @@ export class Game {
       position: Vec2(x, y),
       angle,
       angularDamping: this.def.angularDamping,
-      linearDamping: 0.05,
+      linearDamping: this.def.linearDamping,
     });
     // 字の形をなぞった長方形の集まり。おじゃま字は重い
     const density = isJama(ch) ? 2.2 : 1;

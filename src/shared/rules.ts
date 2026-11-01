@@ -15,6 +15,8 @@ export interface ModeDef {
   platformHalf: number;
   friction: number;
   angularDamping: number;
+  /** 動きの減衰。大きいほど着地後にずるずる動かない */
+  linearDamping: number;
   /** 候補3つのうち塔と合体できる字が 0/1/2 個になる割合 */
   fitWeights: [number, number, number];
   /** 合体できる字を金色に光らせ、画数も見せる */
@@ -28,8 +30,9 @@ export const MODE: Record<Mode, ModeDef> = {
     name: "かんたん",
     desc: "台が広くてすべりにくい。合体できる字が多めに出る",
     platformHalf: 3.3,
-    friction: 1.2,
-    angularDamping: 1.2,
+    friction: 1.6,
+    angularDamping: 4.0,
+    linearDamping: 1.5,
     fitWeights: [0, 0.5, 0.5],
     hints: true,
     mono: false,
@@ -38,8 +41,9 @@ export const MODE: Record<Mode, ModeDef> = {
     name: "ふつう",
     desc: "合体できる字は金色に光る",
     platformHalf: 2.6,
-    friction: 1.0,
-    angularDamping: 0.6,
+    friction: 1.4,
+    angularDamping: 3.0,
+    linearDamping: 1.0,
     fitWeights: [0.25, 0.5, 0.25],
     hints: true,
     mono: false,
@@ -48,8 +52,9 @@ export const MODE: Record<Mode, ModeDef> = {
     name: "鬼畜",
     desc: "台がせまくてすべりやすい。光るヒント・画数・色なし",
     platformHalf: 2.0,
-    friction: 0.7,
-    angularDamping: 0.3,
+    friction: 1.2,
+    angularDamping: 1.8,
+    linearDamping: 0.5,
     fitWeights: [0.4, 0.45, 0.15],
     hints: false,
     mono: true,
