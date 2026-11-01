@@ -105,9 +105,22 @@ npm run typecheck
 npm run build
 ```
 
+## ファイルの置き場所
+
+- `app/index.html`：画面の元（ここを編集する）
+- `src/`：ゲームのコード
+- `public/`：アイコンなど、そのまま配信するファイル
+- リポジトリの一番上の `index.html`・`assets/`・アイコン類：**ビルド済みのゲーム（自動で作るので直接編集しない）**
+
+一番上にビルド済みのゲームを置いているのは、GitHub Pages の公開設定が「Deploy from a branch」でも「GitHub Actions」でも、どちらでも動くゲームが公開されるようにするため。変更したら次でビルドし直してからコミットする。
+
+```sh
+npm run build:site   # dist/ を作り、一番上にもコピーする
+```
+
 ## 公開する（GitHub Pages）
 
-1. Settings → Pages → Source を「GitHub Actions」にする（「Deploy from a branch」のままだと、ビルド前のファイルが公開されてボタンが動かなくなる）
+1. Settings → Pages → Source は「GitHub Actions」がおすすめ（「Deploy from a branch」でも、一番上のビルド済みファイルが公開されるので動く）
 2. main に push すると、テスト・ビルド・公開が走る（`.github/workflows/deploy-pages.yml`）
 3. `https://junnn665.github.io/kanji-tower/` で遊べる
 
