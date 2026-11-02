@@ -222,7 +222,8 @@ export class Game {
 
   /** 相手から飛んできたおじゃま字を割り込ませる（最大3つまでためる） */
   pushJama(ch: string) {
-    if (this.over || this.jamaQueue.length >= 3) return;
+    // ためるのは1つまで（続けて飛んできても積み重ならない）
+    if (this.over || this.jamaQueue.length >= 1) return;
     this.jamaQueue.push(ch);
     sfx("jama");
     buzz([30, 40, 30]);

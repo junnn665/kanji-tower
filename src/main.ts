@@ -1012,6 +1012,17 @@ function onEvent(ev: RoomEvent) {
   if (ev.type === "jama" && ev.ch && isJama(ev.ch)) {
     const forMe = ev.to === b.me || (!!ev.toTeam && ev.toTeam === b.myTeam);
     if (forMe && game && !game.over) {
+      // 届くまでに抜かれて、送った人のほうが上になっていたら受けない
+      const fromKey = b.room.play === "team" ? (b.myTeam === "A" ? "B" : "A") : ev.from;
+      const senderScore = b.rivals.get(fromKey)?.score;
+      if (senderScore && compareScore("strokes", senderScore, game.best) <= 0) return jamaLog("skip:sender-ahead");
+      if (Date.now() - lastJamaGot < JAMA_GUARD) {
+        jamaLog("guard");
+        toast(`${ev.name}さんのおじゃまをガード！`);
+        return;
+      }
+      lastJamaGot = Date.now();
+      jamaLog(`got:${ev.ch}`);
       if (game.control !== "mirror") game.pushJama(ev.ch);
       toast(`${ev.name}さんから「${ev.ch}」が飛んできた！`);
     }
@@ -1022,20 +1033,43 @@ function onEvent(ev: RoomEvent) {
 }
 
 /** 合体したら、いちばん上の人（自分がトップなら2番目）におじゃま字を送る */
+/** おじゃまの決まり：上の人にだけ飛ぶ。送るのは10秒に1回、受けたら15秒は守られる */
+const JAMA_SEND_GAP = 10_000;
+const JAMA_GUARD = 15_000;
+let lastJamaSent = 0;
+let lastJamaGot = 0;
+/** 開発時の確認用：おじゃまの送受信の記録 */
+const jamaLog = (e: string) => {
+  if (import.meta.env.DEV) ((window as unknown as { __jamaLog: string[] }).__jamaLog ??= []).push(e);
+};
+
+/** 合体したら、自分より上にいる人のうち1位の人（チーム戦は相手チームが上のとき）におじゃま字を送る */
 function sendJamaFor(ch: string) {
   const b = battle;
   const r = b?.room;
   if (!b || !r || !r.jama || r.play === "coop" || !game || kanji(ch).strokes < 6) return;
+  if (Date.now() - lastJamaSent < JAMA_SEND_GAP) return;
+  const mine = game.best;
   const jamaCh = JAMA[Math.floor(Math.random() * JAMA.length)].ch;
   if (r.play === "team") {
     if (!b.boxHost || !b.myTeam) return;
-    b.client.sendEvent({ type: "jama", toTeam: b.myTeam === "A" ? "B" : "A", ch: jamaCh, round: r.round });
+    const other = r.teams.find((t) => t.id !== b.myTeam);
+    const theirs = (other && b.rivals.get(other.id)?.score) || other?.score;
+    // 相手チームが上のときだけ
+    if (!other || !theirs || compareScore("strokes", theirs, mine) >= 0) return;
+    lastJamaSent = Date.now();
+    b.client.sendEvent({ type: "jama", toTeam: other.id, ch: jamaCh, round: r.round });
     return;
   }
   const playing = new Set(r.players.filter((p) => p.status === "playing" && p.id !== b.me).map((p) => p.id));
-  const list = [...b.rivals.entries()].filter(([id]) => playing.has(id)).sort((x, y) => compareScore("strokes", x[1].score, y[1].score));
-  const target = list[0]?.[0];
-  if (target) b.client.sendEvent({ type: "jama", to: target, ch: jamaCh, round: r.round });
+  const leader = [...b.rivals.entries()]
+    .filter(([id]) => playing.has(id))
+    .sort((x, y) => compareScore("strokes", x[1].score, y[1].score))[0];
+  // 1位が自分より上のときだけ。自分が1位なら誰にも飛ばない（下の人の逆転のチャンスを残す）
+  if (!leader || compareScore("strokes", leader[1].score, mine) >= 0) return;
+  lastJamaSent = Date.now();
+  jamaLog(`sent:${leader[0]}`);
+  b.client.sendEvent({ type: "jama", to: leader[0], ch: jamaCh, round: r.round });
 }
 
 function sendStamp(stamp: string) {
@@ -1077,6 +1111,8 @@ function startBattleGame(room: RoomState) {
   game?.destroy();
   game = null;
   lastResult = null;
+  lastJamaSent = 0;
+  lastJamaGot = 0;
   const mine = meIn(room)!;
   b.myTeam = room.play === "coop" ? "C" : room.play === "team" ? (mine.team ?? null) : null;
   const team = room.teams.find((t) => t.id === b.myTeam);
